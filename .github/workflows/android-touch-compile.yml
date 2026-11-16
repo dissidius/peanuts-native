@@ -1,0 +1,35 @@
+# Compile (not package) the Android Java UI on Linux with the fake pack engine.
+# This catches regressions in the touch-control skin and guarded adb settings.
+# A playable APK still requires the native Android ARM64 packer stage and device testing.
+name: Android touch UI Java compile
+on:
+  pull_request:
+    paths:
+      - 'android/app/src/main/java/dev/nxnative/android/TouchControls.java'
+      - 'android/app/src/main/java/dev/nxnative/android/MainActivity.java'
+      - 'android/app/src/main/java/dev/peanuts/ctl/**'
+      - '.github/workflows/android-touch-compile.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  android-java:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Verify Android SDK and compile Java UI
+        shell: bash
+        run: |
+          echo "SDK: ${ANDROID_HOME:-not set}"
+          cd android/app
+          chmod +x gradlew
+          ./gradlew --no-daemon compileDebugJavaWithJavac \
+            -PnxApp=peanuts -PnxGenericHost=true -PnxPackEngine=fake \
+            -PnxGames=01006BB00C6F0000 --stacktrace
