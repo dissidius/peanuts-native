@@ -221,7 +221,7 @@ final class TouchControls extends View {
         // a tablet) they stay where the thumbs are, in the bottom corners, instead of spreading over its height
         float y0 = Math.max(0, h - 380 * d), bh = h - y0;
         float bar = picX * w;   // the width of each letterbox bar
-        float rStick = 60 * d, rRight = 54 * d, rPad = 50 * d, rFace = 25 * d, rSh = 25 * d, rSmall = 17 * d, rClick = 17 * d, off = 1.65f * rFace;
+        float rStick = 60 * d, rRight = skinStyle == SKIN_DUALSENSE ? rStick : 54 * d, rPad = 50 * d, rFace = 25 * d, rSh = 25 * d, rSmall = 17 * d, rClick = 17 * d, off = 1.65f * rFace;
         n = 0;
         // Shoulders in the band's top corners, ZL / ZR outside, L / R inside, minus / plus next to them
         float shY = y0 + m + 0.7f * rSh;
