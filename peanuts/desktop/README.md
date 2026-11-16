@@ -44,32 +44,22 @@ The **JDK 21** install is available for Android APK compilation. **Get Android S
 
 If `winget` is missing, install/update Microsoft's App Installer first. MSYS2 installation defaults to `C:\msys64`; you can select a nonstandard root in Studio. The installer uses your Windows permissions, so Windows may request elevation. **All installations require explicit confirmation**, and your keys/game dumps never leave the machine.
 
+## Android-inspired modern interface
+
+Studio now adopts the Android app's **cream, warm ivory, cocoa text and golden-yellow accents**, adapted to a spacious Windows layout rather than reproducing narrow phone screens. The dashboard and other views reuse one coherent card/button/metric design system. There are no fabricated game covers or installable games: the library and its state come from the Android app's `status.json` over ADB.
+
 ## Pages
 
-- **Overview:** guided path, last known Android state, local conversion limits.
-- **Game builder:** drag/drop NSP, XCI, NUP or dump folder; optional update
-  version, DLC, keys path, destination folder, shader workers, dry run;
-  optional ADB push after preparation; streamed log, progress and cancellation.
-- **Android device:** discover authorized ADB devices; transfer an existing
-  pack and game to the phone; rescan; install an existing APK; pull app logs.
-- **Virtual controller styles:** under Android Settings › Game defaults or the in-game Controls panel, choose existing **Switch Pro** or **DualSense** on-screen buttons. DualSense uses colored PlayStation symbols, L1/L2/R1/R2 and symmetric sticks; layouts are saved separately. The Windows Studio's ADB control page can select `touch_skin=dualsense` too (applies on the next game start).
-- **ADB control:** reads the Android app's real `ctl/status.json` and library.
-  Operates the **existing** guarded Android control activity for scan, build,
-  prepare, pause, resume, retry, play, game stop, select settings and companion
-  list/install/update/remove. It does not bypass the app's checks. Removing a
-  companion or stopping a game asks for confirmation.
-- **APK builder:** invokes the existing Gradle + Android NDK build for an
-  installable **test** APK when the **real Android ARM64 packer stage already
-  exists**. The **Generate stage via WSL2** button runs the repository's
-  Linux stage builder in a configured WSL2 distribution; it requires the Linux
-  .NET 10 SDK, zsh, Android NDK and `ANDROID_NDK_HOME` inside WSL, and a
-  Windows work folder. There is no native Windows stage builder yet. No
-  simulated or fake packer stage is offered as an equivalent.
-- **Tools & setup:** checks/installs local tool dependencies and opens outputs.
+- **Dashboard:** actual library totals, Ready and Building counts, phone connection, keys/firmware/GPU readiness, and an active Build/Prepare job if the Android app reports one.
+- **Game library:** searchable, filterable three-column game cards. Ready is shown only when Android's actual library state is `ready`; live progress is shown only for its active game. Selecting a card opens that game's desktop ADB management panel.
+- **PC builder:** drag/drop NSP, XCI, NUP or dump folder; optional update version, DLC, keys path, destination folder, shader worker count and dry run; ADB transfer when requested; streaming output and cancellation. All operations call the repository's real PC packer.
+- **Build center:** native Android Build/Prepare status, actual step text, counted work units and Android-reported ETA, pause/resume/retry, diagnostic and log locations. PC build output remains in the global activity console. `status.json` does not provide a PC job queue, so no unrelated fake progress is displayed.
+- **Android device:** selected ADB device, keys/firmware/driver, configured game/update/DLC/build folders and free space; send a pack, install an APK without uninstalling another signature, open Android settings, rescan, and pull app logs.
+- **Companions:** catalog loaded by Android on request, with searchable cards, actual package versions/installation states, and enabled install/update/remove only for built games. A new optional read-only ADB flag `companion do=list all=true` includes games not in the user's library; older Android APKs that do not implement the flag return only matches for their local games.
+- **ADB controls:** real library/status table, on-device Build/Prepare/Play, guarded job commands and known settings (fps, resolution, upscaler, console mode, overlay, screen-on and Switch/DualSense touch skin). **Advanced settings not exposed by the ADB API** (GPU driver management, frame generation, physical controller mapping, motion and game-specific choices) are opened in the Android UI using the existing safe `nav` command, not simulated in Windows.
+- **APK builder:** Gradle/NDK build of a development APK only with a validated **real Android ARM64 packer stage**; optional stage generation via a configured WSL2 distribution. No fake playable APK or signing-key harvesting.
+- **Tools & setup:** noninteractive prerequisite checks, explicit Windows dependency installations, custom MSYS2/ADB paths and precise compiler preflight. Packages and game data stay local; dependencies come from their designated package managers.
 
-The GUI neither stores the console keys contents nor commits or uploads game
-files. The `prod.keys` path is passed only to the local importer when it is
-needed; saved logs should still be reviewed before sharing.
 
 ## Oodle and Unreal decoding on Windows x64
 
