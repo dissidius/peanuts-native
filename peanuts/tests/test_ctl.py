@@ -198,6 +198,10 @@ class CtlTest(unittest.TestCase):
         self.assertEqual(self.set('upscaler', 'dlss'), 'bad bad_value')
         self.assertEqual(self.set('overlay', 'off'), 'ok overlay false false now')
         self.assertEqual(self.set('keep_screen_on', 'on'), 'ok keep_screen_on false true now')
+        self.assertEqual(self.set('touch_skin', 'switch'), 'ok touch_skin false 0 next_start')
+        self.assertEqual(self.set('touch_skin', 'dualsense'), 'ok touch_skin false 1 next_start')
+        self.assertEqual(self.set('touch_skin', 'dualsense', own=True), 'bad bad_args')
+        self.assertEqual(self.set('touch_skin', 'xbox'), 'bad bad_value')
         self.assertEqual(self.set('overlay', 'on', own=True), 'bad bad_args')
         self.assertEqual(self.set('overlay', 'default'), 'bad bad_value')
 
