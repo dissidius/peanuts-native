@@ -154,6 +154,7 @@ class Studio(QMainWindow):
         self.install_queue = []
         self.install_folder = ""
         self.install_active = None
+        self.task_mode = ""
         self.task_serial = 0
         self.busy = False
         self.pending_id = ""
@@ -483,6 +484,7 @@ class Studio(QMainWindow):
             self.warn("Task running", "Stop or finish the current task first.")
             return False
         self.busy = True; self.stop_btn.setEnabled(True)
+        self.task_mode = label
         self.task_serial += 1
         serial = self.task_serial
         self.task_label.setText(label); self.progress.setRange(0, 0)
@@ -519,6 +521,7 @@ class Studio(QMainWindow):
         self.busy = False; self.stop_btn.setEnabled(False)
         self.progress.setRange(0, 100); self.progress.setValue(0)
         self.task_label.setText("Failed")
+        self.task_mode = ""
         self.install_queue.clear()
         self.install_active = None
         self.warn("Could not start", message)
@@ -537,6 +540,8 @@ class Studio(QMainWindow):
             if line.startswith("stage: "): self.task_label.setText(line[7:].strip())
 
     def task_finished(self, code, status):
+        completed_mode = self.task_mode
+        self.task_mode = ""
         self.busy = False; self.stop_btn.setEnabled(False)
         if code == 0:
             self.progress.setRange(0, 100); self.progress.setValue(100)
@@ -546,6 +551,16 @@ class Studio(QMainWindow):
             self.progress.setRange(0, 100); self.progress.setValue(0)
             self.task_label.setText("Exit code " + str(code))
             self.write_log("✗  Task exited with code " + str(code))
+        if completed_mode.startswith("Verifying installed packer"):
+            label, install = self.dependency_rows["packer"]
+            if code == 0:
+                label.setText("✓  Python, translator and SPIR-V tools verified")
+                label.setStyleSheet("color:#91ddb2;")
+                install.setEnabled(False)
+            else:
+                label.setText("✕  Packer verification failed. Choose Install to repair it.")
+                label.setStyleSheet("color:#f0bd80;")
+                install.setEnabled(True)
         installed = self.install_active
         self.install_active = None
         if installed:
