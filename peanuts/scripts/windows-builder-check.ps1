@@ -23,13 +23,20 @@ Write-Host '[2/4] Run native importer tests (synthetic inputs)' -ForegroundColor
 & ctest --test-dir $Build --output-on-failure
 if ($LASTEXITCODE -ne 0) { throw 'Native importer tests failed.' }
 Write-Host '[3/4] Run Windows builder Python tests' -ForegroundColor Cyan
-& python (Join-Path $Repo 'peanuts\tests\test_peanuts_build.py')
+$TestScript = Join-Path $Repo 'peanuts\tests\test_peanuts_build.py'
+if ($SkipPackerEnvironment) {
+    Need python 'CI tests require Python 3.14 on PATH.'
+    & python $TestScript
+} else {
+    # Use the environment's own Python, bootstrapped by bananative.bat on first use.
+    & (Join-Path $Repo 'scripts\bananative.bat') python $TestScript
+}
 if ($LASTEXITCODE -ne 0) { throw 'Python builder tests failed.' }
 if (-not $SkipPackerEnvironment) {
     Write-Host '[4/4] Check Windows packer environment' -ForegroundColor Cyan
     & (Join-Path $Repo 'scripts\bananative.bat') check
     if ($LASTEXITCODE -ne 0) { throw 'Packer environment check failed.' }
 } else {
-    Write-Host '[4/4] Packer environment check skipped (native importer smoke test only).' -ForegroundColor Yellow
+    Write-Host '[4/4] Full packer environment check skipped (CI smoke test only).' -ForegroundColor Yellow
 }
 Write-Host 'Windows builder preflight passed. This does not prove a game pack boots on Android.' -ForegroundColor Green
