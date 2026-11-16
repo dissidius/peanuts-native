@@ -40,6 +40,21 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Studio tests failed' }
           python peanuts/desktop/app.py --smoke
           if ($LASTEXITCODE -ne 0) { throw 'Studio startup failed' }
+      - name: Capture first-run desktop screenshot
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PEANUTS_REPO: ${{ github.workspace }}
+        run: |
+          python peanuts/desktop/app.py --preview PeanutsStudio-preview.png
+          if ($LASTEXITCODE -ne 0) { throw 'Studio screenshot capture failed' }
+          if (!(Test-Path PeanutsStudio-preview.png)) { throw 'Studio screenshot not created' }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: PeanutsStudio-UI-Preview
+          path: PeanutsStudio-preview.png
+          if-no-files-found: error
+          retention-days: 14
       - name: Package Windows executable
         shell: pwsh
         run: |
