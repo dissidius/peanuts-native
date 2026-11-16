@@ -37,7 +37,13 @@ class Unoodle(unittest.TestCase):
             # MSYS2 GCC on the hosted runner cannot always emit a static EXE
             # into the cross-volume runner TEMP dir. Exercise the real target.
             cls.exe = str(REPO / 'peanuts/.build/ooz/unoodle.exe')
-            r = subprocess.run([sys.executable, str(REPO / 'peanuts/scripts/build_unoodle_windows.py'), cls.exe], capture_output=True, text=True)
+            # The preceding Windows preflight may have built this executable.
+            # Reuse it instead of immediately recompiling while antivirus scans
+            # the file; real builds also reuse up-to-date decoders.
+            if os.path.isfile(cls.exe):
+                r = subprocess.CompletedProcess([], 0, '', '')
+            else:
+                r = subprocess.run([sys.executable, str(REPO / 'peanuts/scripts/build_unoodle_windows.py'), cls.exe], capture_output=True, text=True)
         else:
             cls.exe = os.path.join(cls.dir.name, 'unoodle')
             r = subprocess.run(['sh', str(OOZ / 'build.sh'), cls.exe, cxx()], capture_output=True, text=True)
