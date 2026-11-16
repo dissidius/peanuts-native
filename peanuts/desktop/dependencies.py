@@ -160,9 +160,9 @@ def dependency_status(repo, *, adb="", root="", sdk_path="", deep=False):
         ("packer", pack_ok, pack_detail, False),
         ("java", bool(javac), javac or "JDK 21 is needed for Android APK compilation", True),
         ("sdk", not missing_sdk,
-         ("SDK components ready: " + str(sdk)) if not missing_sdk else
-         ("SDK at " + str(sdk) + " · Missing: " + ", ".join(missing_sdk) +
-          ". Use Install SDK components; reinstalling Android Studio is not required."), True),
+         ("Android API 36, NDK 28.2 and Build-Tools ready · " + str(sdk)) if not missing_sdk else
+         ("Missing " + ", ".join(missing_sdk) + " · SDK: " + str(sdk) +
+          " (install components, not the Android Studio IDE)"), True),
     ]
 
 def install_command(kind, repo, *, root="", folder="", sdk_path=""):
