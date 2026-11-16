@@ -191,9 +191,14 @@ def install_command(kind, repo, *, root="", folder="", sdk_path=""):
         return [str(bash), "-lc", shell]
     if kind == "sdk":
         destination = sdk_root(repo, sdk_path)
-        return [sys.executable, "-u",
+        packer = packer_prefix(repo)
+        py = (packer / "python.exe") if packer else None
+        executable = str(py) if py and py.is_file() else shutil.which("python.exe") or shutil.which("python")
+        if not executable:
+            raise RuntimeError("SDK installation requires Python. Install the Studio Python/.NET packer first.")
+        return [executable, "-u",
                 str(Path(repo) / "peanuts/desktop/android_sdk_setup.py"),
-                "install", "--sdk-root", str(destination)]
+                "install", "--sdk-root", str(destination), "--license-consent"]
     if kind == "packer":
         base = Path(folder) if folder else Path.home()
         if not base.is_dir():
