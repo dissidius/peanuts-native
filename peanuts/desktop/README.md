@@ -40,6 +40,7 @@ and make `adb devices` show one authorized device before transfers.
   optional ADB push after preparation; streamed log, progress and cancellation.
 - **Android device:** discover authorized ADB devices; transfer an existing
   pack and game to the phone; rescan; install an existing APK; pull app logs.
+- **Virtual controller styles:** under Android Settings › Game defaults or the in-game Controls panel, choose existing **Switch Pro** or **DualSense** on-screen buttons. DualSense uses colored PlayStation symbols, L1/L2/R1/R2 and symmetric sticks; layouts are saved separately. The Windows Studio's ADB control page can select `touch_skin=dualsense` too (applies on the next game start).
 - **ADB control:** reads the Android app's real `ctl/status.json` and library.
   Operates the **existing** guarded Android control activity for scan, build,
   prepare, pause, resume, retry, play, game stop, select settings and companion
