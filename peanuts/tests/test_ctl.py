@@ -135,6 +135,8 @@ class CtlTest(unittest.TestCase):
 
     def test_the_companion_command(self):   # no screen: the catalog is read and a package installed on the command's own thread
         self.assertEqual(self.request('cmd=companion', 'do=list'), 'ok companion null false null')
+        self.assertEqual(self.request('cmd=companion', 'do=list', 'all=true'), 'ok companion null false null')
+        self.assertEqual(self.request('cmd=companion', 'do=list', 'all=bad'), 'bad bad_args')
         self.assertEqual(self.request('cmd=companion', 'do=list', 'title_id=' + TITLE), 'ok companion null false ' + TITLE)
         self.assertEqual(self.request('cmd=companion', 'do=install', 'title_id=' + TITLE, 'id=c1'), 'ok companion c1 false ' + TITLE)
         self.assertEqual(self.request('cmd=companion', 'do=UPDATE', 'title_id=' + TITLE.lower()), 'ok companion null false ' + TITLE)
