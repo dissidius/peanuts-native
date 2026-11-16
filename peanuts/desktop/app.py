@@ -1222,7 +1222,7 @@ def main():
         QMessageBox.critical(None, "Peanuts Studio", str(e))
         return 2
     win.show()
-    previews = ("--preview", "--preview-tools", "--preview-dialog")
+    previews = ("--preview", "--preview-tools", "--preview-dialog", "--preview-shaders")
     selected = next((mode for mode in previews if mode in sys.argv), None)
     if selected:
         # Real Windows screenshots, without mock device/game data.
@@ -1230,6 +1230,12 @@ def main():
         destination = sys.argv[at + 1] if at + 1 < len(sys.argv) else 'PeanutsStudio-preview.png'
         def capture():
             win.show_page(win.nav_map["tools"] if selected != "--preview" else win.nav_map["overview"])
+            if selected == "--preview-shaders":
+                # Screenshot-only synthetic fixture: no game, device or builder is started.
+                win.task_label.setText("Preparing shader translation")
+                win.progress.setRange(0, 100)
+                win.progress.show()
+                win._process_task_line("progress 54080 73496 translate")
             app.processEvents()
             if selected == "--preview-dialog":
                 dlg = QMessageBox(win)
