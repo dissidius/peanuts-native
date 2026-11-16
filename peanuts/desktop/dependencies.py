@@ -85,15 +85,54 @@ def packer_state(repo, *, deep=False):
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, "Environment verification failed: " + str(exc)
 
-def sdk_root():
-    roots = [os.environ.get("ANDROID_HOME"), os.environ.get("ANDROID_SDK_ROOT"),
-             str(Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local")) / "Android/Sdk")]
-    for root in roots:
-        if root and Path(root, "platforms/android-36/android.jar").is_file():
-            return Path(root)
-    return Path(roots[-1])
+def sdk_candidates(repo=None, custom=""):
+    """Find Android's configured SDK even when Android Studio chose a custom drive."""
+    result = []
+    def add(path):
+        if not path:
+            return
+        candidate = Path(str(path).strip().strip('"'))
+        if candidate not in result:
+            result.append(candidate)
+    add(custom)
+    add(os.environ.get("PEANUTS_ANDROID_SDK"))
+    add(os.environ.get("ANDROID_HOME"))
+    add(os.environ.get("ANDROID_SDK_ROOT"))
+    if repo:
+        props = Path(repo) / "android/app/local.properties"
+        if not props.is_file():
+            props = Path(repo) / "local.properties"
+        if props.is_file():
+            for line in props.read_text(encoding="utf-8", errors="replace").splitlines():
+                if line.startswith("sdk.dir="):
+                    raw = line.split("=", 1)[1].replace("\\:", ":").replace("\\\\", "\\")
+                    add(raw)
+                    break
+    add(Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData/Local")) / "Android/Sdk")
+    add(Path.home() / "Android/Sdk")
+    return result
 
-def dependency_status(repo, *, adb="", root="", deep=False):
+def sdk_root(repo=None, custom=""):
+    candidates = sdk_candidates(repo, custom)
+    # Respect explicitly chosen roots first when they exist; never mistake
+    # Android Studio (the IDE) for the separately installed SDK packages.
+    if custom:
+        return Path(custom)
+    for root in candidates:
+        if (root / "platforms").is_dir() or (root / "cmdline-tools").is_dir():
+            return root
+    return candidates[0]
+
+def sdk_missing(sdk):
+    expected = {
+        "Android API 36": sdk / "platforms/android-36/android.jar",
+        "NDK 28.2.13676358": sdk / "ndk/28.2.13676358/source.properties",
+        "Build-Tools 36.0.0": sdk / "build-tools/36.0.0/aapt2.exe",
+    }
+    return [label for label, target in expected.items() if not target.is_file()]
+
+
+def dependency_status(repo, *, adb="", root="", sdk_path="", deep=False):
     """Returns stable tuples: (id, ready, detail, optional).
     Optional Android APK tools are distinguished from core PC game pack tools.
     """
@@ -112,21 +151,21 @@ def dependency_status(repo, *, adb="", root="", deep=False):
     adb_path = adb_executable(adb)
     java_home = Path(os.environ.get("JAVA_HOME", "")) if os.environ.get("JAVA_HOME") else None
     javac = shutil.which("javac") or (str(java_home / "bin/javac.exe") if java_home and (java_home / "bin/javac.exe").is_file() else "")
-    sdk = sdk_root()
-    sdk_components = [sdk / "platforms/android-36/android.jar",
-                      sdk / "ndk/28.2.13676358/source.properties"]
+    sdk = sdk_root(repo, sdk_path)
+    missing_sdk = sdk_missing(sdk)
     return [
         ("msys", bash.is_file(), str(root) if bash.is_file() else "MSYS2 not found (needed for Windows importer and Oodle decoding)", False),
         ("ucrt", not missing, "UCRT64 ready: " + str(binpath) if not missing else "Missing: " + ", ".join(missing), False),
         ("adb", bool(adb_path), adb_path or "ADB missing (Android SDK Platform-Tools)", False),
         ("packer", pack_ok, pack_detail, False),
         ("java", bool(javac), javac or "JDK 21 is needed for Android APK compilation", True),
-        ("sdk", all(x.is_file() for x in sdk_components),
-         "Android SDK 36 + NDK 28.2: " + str(sdk) if all(x.is_file() for x in sdk_components)
-         else "Android Studio SDK Manager must install Android API 36 and NDK 28.2", True),
+        ("sdk", not missing_sdk,
+         ("SDK components ready: " + str(sdk)) if not missing_sdk else
+         ("SDK at " + str(sdk) + " · Missing: " + ", ".join(missing_sdk) +
+          ". Use Install SDK components; reinstalling Android Studio is not required."), True),
     ]
 
-def install_command(kind, repo, *, root="", folder=""):
+def install_command(kind, repo, *, root="", folder="", sdk_path=""):
     """Explicit, bounded, non-interactive child process commands for GUI use.
 
     The GUI always confirms before calling. Installation may ask Windows for
@@ -150,6 +189,11 @@ def install_command(kind, repo, *, root="", folder=""):
         # A full distribution update can require a restart, so do not hide errors.
         shell = "pacman --noconfirm --needed -Syu " + " ".join(MSYS_PACKAGES)
         return [str(bash), "-lc", shell]
+    if kind == "sdk":
+        destination = sdk_root(repo, sdk_path)
+        return [sys.executable, "-u",
+                str(Path(repo) / "peanuts/desktop/android_sdk_setup.py"),
+                "install", "--sdk-root", str(destination)]
     if kind == "packer":
         base = Path(folder) if folder else Path.home()
         if not base.is_dir():
