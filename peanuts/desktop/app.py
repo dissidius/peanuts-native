@@ -358,7 +358,7 @@ class Studio(QMainWindow):
         v.addWidget(c)
         c, body = card("Game settings and companions")
         self.setting_key = QComboBox()
-        self.setting_key.addItems(["fps_cap", "res_scale", "upscaler", "console_mode", "overlay", "keep_screen_on"])
+        self.setting_key.addItems(["fps_cap", "res_scale", "upscaler", "console_mode", "touch_skin", "overlay", "keep_screen_on"])
         self.setting_value = QComboBox(); self.setting_value.setEditable(True)
         self.setting_key.currentTextChanged.connect(self.setting_values)
         self.setting_values("fps_cap")
@@ -614,13 +614,14 @@ class Studio(QMainWindow):
                 "res_scale":["default","0.5","0.75","1","1.25","1.5","2"],
                 "upscaler":["default","nearest","bilinear","fsr1","native","sgsr1"],
                 "console_mode":["default","docked","handheld"],
+                "touch_skin":["switch","dualsense"],
                 "overlay":["on","off"],"keep_screen_on":["on","off"]}
         self.setting_value.clear(); self.setting_value.addItems(opts.get(key, []))
 
     def apply_setting(self):
         fields = {"key":self.setting_key.currentText(), "value":self.setting_value.currentText()}
         tid = self.game_id.text().strip().upper()
-        if tid and core.TITLE.fullmatch(tid) and fields["key"] not in ("overlay", "keep_screen_on"):
+        if tid and core.TITLE.fullmatch(tid) and fields["key"] not in ("overlay", "keep_screen_on", "touch_skin"):
             fields["title_id"] = tid
         self.control("set", fields)
 
