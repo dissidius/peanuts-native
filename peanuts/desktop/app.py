@@ -1143,14 +1143,29 @@ def main():
         QMessageBox.critical(None, "Peanuts Studio", str(e))
         return 2
     win.show()
-    if '--preview' in sys.argv:
-        # Actual UI capture on the Windows CI runner, without a mock device or fake library.
-        at = sys.argv.index('--preview')
+    previews = ("--preview", "--preview-tools", "--preview-dialog")
+    selected = next((mode for mode in previews if mode in sys.argv), None)
+    if selected:
+        # Real Windows screenshots, without mock device/game data.
+        at = sys.argv.index(selected)
         destination = sys.argv[at + 1] if at + 1 < len(sys.argv) else 'PeanutsStudio-preview.png'
         def capture():
-            win.show_page(win.nav_map["overview"])
+            win.show_page(win.nav_map["tools"] if selected != "--preview" else win.nav_map["overview"])
             app.processEvents()
-            win.grab().save(destination, "PNG")
+            if selected == "--preview-dialog":
+                dlg = QMessageBox(win)
+                dlg.setIcon(QMessageBox.Icon.Question)
+                dlg.setWindowTitle("Install prerequisite")
+                dlg.setText("Install Python/.NET shader packer on this PC?")
+                dlg.setInformativeText("This downloads official packages. Windows may request elevation.")
+                dlg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                dlg.setDefaultButton(QMessageBox.StandardButton.No)
+                dlg.show()
+                app.processEvents()
+                dlg.grab().save(destination, "PNG")
+                dlg.close()
+            else:
+                win.grab().save(destination, "PNG")
             app.quit()
         QTimer.singleShot(900, capture)
     elif '--smoke' in sys.argv:
