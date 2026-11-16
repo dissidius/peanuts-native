@@ -6,7 +6,7 @@ pretend set of games. Commands are delegated to Studio's guarded ADB bridge.
 """
 from datetime import datetime
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QProgressBar, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
@@ -14,16 +14,25 @@ from PySide6.QtWidgets import (
 
 CREAM_STYLE = """
 QMainWindow, QWidget#Main, QScrollArea { background:#fbf6e9; }
+QDialog, QMessageBox { background-color:#fffaf0; color:#38291c; }
+QDialog QLabel, QMessageBox QLabel { color:#38291c; background:transparent; font-size:14px; }
+QMessageBox QLabel#qt_msgbox_label { color:#38291c; min-width:340px; }
+QMessageBox QPushButton { min-width:80px; min-height:32px; font-size:13px; }
 QWidget#PageSurface { background:#fbf6e9; }
-QWidget { color:#38291c; font: 12px 'Segoe UI'; }
+QWidget { color:#38291c; font: 13px 'Segoe UI'; }
 QFrame#Sidebar { background:#fffdf8; border-right:1px solid #ecdfc1; }
 QFrame#Card { background:#fffdfa; border:1px solid #e8d8b9; border-radius:17px; }
 QFrame#Hero { background:#fff0bd; border:1px solid #f2d47e; border-radius:22px; }
 QFrame#Tile { background:#fffefa; border:1px solid #e9dfc7; border-radius:18px; }
 QFrame#Metric { background:#fffdfa; border:1px solid #ebe0c8; border-radius:15px; }
+QFrame#ActivityBar { background:#fffdfa; border:1px solid #e8d8b9; border-radius:13px; }
+QFrame#ToolRow { background:#fffaf1; border:1px solid #f0e4ca; border-radius:11px; }
+QLabel#ToolName { color:#463323; font-size:13px; font-weight:650; }
+QLabel#ToolReady { color:#196844; font-size:13px; font-weight:650; }
+QLabel#ToolMissing { color:#94611b; font-size:13px; font-weight:650; }
 QLabel#PageTitle { color:#35281b; font-size:25px; font-weight:750; }
 QLabel#Title { color:#342819; font-size:15px; font-weight:700; }
-QLabel#Muted { color:#85735e; }
+QLabel#Muted { color:#6e5d48; }
 QLabel#Brand { color:#8d570f; font-size:21px; font-weight:800; }
 QLabel#Status { color:#765f46; }
 QLabel#MetricValue { color:#493018; font-size:27px; font-weight:750; }
@@ -38,7 +47,7 @@ QPushButton { background:#fff9e9; border:1px solid #eadcbf; border-radius:10px;
               min-height:30px; padding:6px 13px; color:#56432c; font-weight:600; }
 QPushButton:hover { background:#fff1c9; border-color:#dfb75c; }
 QPushButton:pressed { background:#f9e2a2; }
-QPushButton:disabled { color:#aa9b83; background:#f5efdf; border-color:#e9e1d0; }
+QPushButton:disabled { color:#766d5f; background:#f3ecdd; border-color:#e6dac2; }
 QPushButton#Primary { background:#ffd548; border:1px solid #f6c62f; color:#352614; font-weight:750; }
 QPushButton#Primary:hover { background:#ffe078; }
 QPushButton#Nav { background:transparent; border:0; color:#79674f; text-align:left;
@@ -60,6 +69,27 @@ QScrollBar:vertical { background:#fbf6e9; width:11px; }
 QScrollBar::handle:vertical { background:#dbc6a3; border-radius:5px; min-height:30px; }
 QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical { height:0; }
 """
+
+
+def light_palette():
+    """Force readable native dialogs even when Windows system theme is dark."""
+    p = QPalette()
+    for role, color in (
+        (QPalette.ColorRole.Window, "#fffaf0"),
+        (QPalette.ColorRole.WindowText, "#38291c"),
+        (QPalette.ColorRole.Base, "#fffdf7"),
+        (QPalette.ColorRole.AlternateBase, "#fbf3e2"),
+        (QPalette.ColorRole.Text, "#38291c"),
+        (QPalette.ColorRole.Button, "#fff5df"),
+        (QPalette.ColorRole.ButtonText, "#38291c"),
+        (QPalette.ColorRole.ToolTipBase, "#51402b"),
+        (QPalette.ColorRole.ToolTipText, "#fff9eb"),
+        (QPalette.ColorRole.Highlight, "#f7d675"),
+        (QPalette.ColorRole.HighlightedText, "#38291c"),
+        (QPalette.ColorRole.PlaceholderText, "#82705c"),
+    ):
+        p.setColor(role, QColor(color))
+    return p
 
 
 def button(title, callback, primary=False):
