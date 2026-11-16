@@ -12,11 +12,7 @@ Actions run, download the `PeanutsStudio-Windows-x64` artifact and extract the
 `PeanutsStudio.exe` into the root of a checkout of this repository. Double-click
 it. Or set `PEANUTS_REPO` to an existing checkout before launching the exe.
 
-**Launch from source:** Double-click
-`peanuts/scripts/peanuts-studio.bat`. It bootstraps/reuses the repository's
-existing Python 3.14 packer environment and installs the pinned PySide6 GUI
-dependency there on first use. Both launch paths use the **same** existing
-backend in `peanuts/scripts/peanuts_build.py`.
+**Launch from source:** Double-click `peanuts/scripts/peanuts-studio.bat`. It needs Python 3.10 or newer and installs only the pinned PySide6 GUI dependency if needed. It no longer requires or silently bootstraps the game packer. Install the packer's separate prerequisites from the **Tools & setup** page. Both launch paths use the same existing backend in `peanuts/scripts/peanuts_build.py`.
 
 For the Windows importer install [MSYS2 UCRT64](https://www.msys2.org/) into
 `C:\msys64`. In an **MSYS2 UCRT64** shell:
@@ -31,6 +27,22 @@ The PC packer environment is installed using the **Tools & setup** page or
 `scripts/bananative.bat setup`. Install Android
 [platform-tools](https://developer.android.com/tools/releases/platform-tools)
 and make `adb devices` show one authorized device before transfers.
+
+## In-app Windows prerequisites
+
+The **Tools & setup** page is now the starting point for a first installation.
+You do **not** need to install the game packer to open the standalone Studio exe.
+
+- **Check tools:** a read-only scan of MSYS2, the exact UCRT64 GCC/CMake/make/zlib/patch toolchain, ADB, the Python/.NET packer and optional Android APK build tools. The scan finishes without launching downloads, asking console questions or running CMake. If an environment exists, a separate bounded verification checks the real shader dependencies; it cannot silently rebuild the packer.
+- **Install missing core tools:** explicitly confirm a sequential installation of MSYS2, the UCRT64 packages, Android Platform-Tools (ADB) and Python 3.14/.NET shader packer. The progress is streamed to the activity console; failure stops the sequence so later installers do not run silently.
+- **Install** next to each requirement: installs only that dependency after user confirmation. MSYS2, ADB and optional JDK/Android Studio use Windows Package Manager (`winget`); UCRT64 uses MSYS2's `pacman`; the packer uses this repository's micromamba/conda-forge setup, after asking for an existing destination folder.
+- **Custom installation paths:** choose an existing MSYS2 root (the folder containing `usr/bin/bash.exe`) or an `adb.exe` on another drive; click **Save paths and recheck**. The importer is prevented from falling back to Clang or an unrelated MinGW compiler when UCRT64 is not ready.
+- **Verify packer:** a finite, non-interactive check of the installed Python, native shader tools and .NET translator. It does not create environments or wait for console input. Studio terminates the checker if it exceeds 60 seconds.
+- **Run full preflight:** starts the native importer build/tests only after required MSYS2/UCRT64 files and a packer installation have been found. The builder uses the **absolute UCRT64 compiler** and detects an old Clang CMake cache so your machine cannot silently reuse it.
+
+The **JDK 21** install is available for Android APK compilation. **Get Android Studio** installs the Android Studio IDE; you must then use its **SDK Manager** to install Android API 36 and NDK 28.2 (the status row checks for both). A playable Android APK also needs its real ARM64 packer stage, not a simulated one; see the APK builder page.
+
+If `winget` is missing, install/update Microsoft's App Installer first. MSYS2 installation defaults to `C:\msys64`; you can select a nonstandard root in Studio. The installer uses your Windows permissions, so Windows may request elevation. **All installations require explicit confirmation**, and your keys/game dumps never leave the machine.
 
 ## Pages
 
