@@ -377,8 +377,9 @@ class Studio(QMainWindow):
         body.addLayout(row(self.stage, button("Browse stage…", lambda: self.browse_dir(self.stage))))
         self.games = QLineEdit(); self.games.setPlaceholderText("Empty = repository's default supported title IDs")
         body.addWidget(labelled("Games to include (comma-separated 16-digit IDs)", self.games))
-        body.addWidget(muted("A stage can be produced through the project's Linux/macOS build scripts, including inside a suitably configured WSL environment. Native Windows stage generation is not implemented; the GUI will not substitute a fake packer."))
-        body.addLayout(row(button("Build debug-signed APK", self.build_apk, True),
+        body.addWidget(muted("Generate the real packer stage through configured WSL2 (Linux .NET 10 SDK, zsh, Android NDK and ANDROID_NDK_HOME required). Native Windows stage generation is not implemented; no fake packer is substituted."))
+        body.addLayout(row(button("Generate stage via WSL2", self.wsl_stage),
+                           button("Build debug-signed APK", self.build_apk, True),
                            button("Open APK output", self.open_apk_output)))
         v.addWidget(c)
         c, body = card("Release signing", "This builder creates an installable test/development APK. Production updates require the existing release signing key and Gradle's release parameters; the GUI deliberately never asks for or saves release passwords.")
@@ -666,6 +667,16 @@ class Studio(QMainWindow):
         where = QFileDialog.getExistingDirectory(self, "Folder for logs")
         if where:
             self.run_task(core.adb_command(serial, ["pull", "/sdcard/Android/data/" + core.PACKAGE + "/files/logs", where]), "Pulling Android logs")
+
+    def wsl_stage(self):
+        folder = QFileDialog.getExistingDirectory(self, "Choose a Windows work folder (stage will be stored in its stage/ subfolder)")
+        if not folder: return
+        try:
+            cmd = core.wsl_stage_command(self.repo, folder)
+            self.stage.setText(str(Path(folder) / "stage"))
+            self.run_task(cmd, "Building real Android ARM64 packer stage in WSL2")
+        except (RuntimeError, ValueError) as e:
+            self.warn("WSL2 stage prerequisites", e)
 
     def build_apk(self):
         try: cmd = core.gradle_command(self.repo, self.stage.text().strip(), self.games.text().strip())
