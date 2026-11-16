@@ -2,7 +2,7 @@
 """dm/third_party/ooz's unoodle, the PC builder's Oodle decoding worker: it builds from the pinned files, speaks the DM_OODLE_SERVE pipe protocol, and fails closed.
 No game data: ooz has no compressor, so the valid streams here are the three forms that can be written by hand from the open decoder's reading of the format
 (a block stored whole, a quantum stored whole, a quantum of one repeated byte). Entropy-coded Kraken and Mermaid streams are checked per game instead, by the
-shader keys of the profile (dm/third_party/ooz/README.md "Checked"). Skipped where the worker cannot be built (Windows, not x86-64, no C++ compiler or patch)."""
+shader keys of the profile (dm/third_party/ooz/README.md "Checked"). Skipped where the worker cannot be built (non-x86-64, no C++ compiler or patch)."""
 import os, platform, shutil, struct, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
@@ -28,12 +28,16 @@ def quantum(size_field, rest, kind=6):
 class Unoodle(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        if sys.platform == 'win32' or platform.machine().lower() not in ('x86_64', 'amd64'): raise unittest.SkipTest('unoodle is built on x86-64 Linux and macOS only')
-        if not cxx() or not shutil.which('patch') or not shutil.which('sh'): raise unittest.SkipTest('no C++ compiler or no patch program')
+        if platform.machine().lower() not in ('x86_64', 'amd64'): raise unittest.SkipTest('unoodle requires x86-64')
+        if sys.platform != 'win32' and (not cxx() or not shutil.which('patch') or not shutil.which('sh')):
+            raise unittest.SkipTest('no C++ compiler or no patch program')
         cls.dir = tempfile.TemporaryDirectory()
-        cls.exe = os.path.join(cls.dir.name, 'unoodle')
-        r = subprocess.run(['sh', str(OOZ / 'build.sh'), cls.exe, cxx()], capture_output=True, text=True)
-        if r.returncode: cls.dir.cleanup(); raise AssertionError(f'build.sh failed ({r.returncode}): {r.stdout}{r.stderr}')
+        cls.exe = os.path.join(cls.dir.name, 'unoodle.exe' if sys.platform == 'win32' else 'unoodle')
+        if sys.platform == 'win32':
+            r = subprocess.run([sys.executable, str(REPO / 'peanuts/scripts/build_unoodle_windows.py'), cls.exe], capture_output=True, text=True)
+        else:
+            r = subprocess.run(['sh', str(OOZ / 'build.sh'), cls.exe, cxx()], capture_output=True, text=True)
+        if r.returncode: cls.dir.cleanup(); raise AssertionError(f'unoodle build failed ({r.returncode}): {r.stdout}{r.stderr}')
 
     @classmethod
     def tearDownClass(cls):
