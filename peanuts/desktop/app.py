@@ -80,7 +80,7 @@ def muted(text):
 
 
 def button(text, fn, primary=False):
-    b = QPushButton(text)
+    b = QPushButton(text.replace("&", "&&"))
     if primary: b.setObjectName("Primary")
     b.clicked.connect(fn)
     return b
@@ -266,7 +266,7 @@ class Studio(QMainWindow):
         ]
         self.nav_map = {key: i for i, (_, key, _) in enumerate(names)}
         for idx, (name, key, factory) in enumerate(names):
-            nav = QPushButton(name)
+            nav = QPushButton(name.replace("&", "&&"))
             nav.setObjectName("Nav")
             nav.setCheckable(True)
             nav.clicked.connect(lambda checked=False, i=idx: self.show_page(i))
