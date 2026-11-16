@@ -144,6 +144,7 @@ with `reimport`, or with `job` `do=try_anyway` to build without those shaders.
 | `upscaler` | `nearest`, `bilinear`, `fsr1`, `native`, `sgsr1` (one game: also `default`) | yes; not for a game on the DLSS stand-in or with Resolution presets |
 | `fps_cap` | `default`, `own`, `60`, `30`, `20`, `15`; a game with the frame limit list: `60`, `45`, `40`, `30`, `20`, `default` | yes; not for a game that picks its own rate |
 | `overlay` | `on`, `off` | no |
+| `touch_skin` | `switch`, `dualsense` | no; applies on next game start |
 | `keep_screen_on` | `on`, `off` (Settings › System › Keep the screen on while preparing) | no |
 
 A value outside the list is `bad_value`, another key `unknown_key`, a row the game does not have
