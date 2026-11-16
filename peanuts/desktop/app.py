@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 import core
+import dependencies as deps
 
 APP_NAME = "Peanuts Studio"
 RE_PROGRESS = re.compile(r"^progress:? (\d+)[ /](\d+)")
@@ -147,6 +148,12 @@ class Studio(QMainWindow):
         super().__init__()
         self.repo = core.repo_root()
         self.settings = QSettings("PeanutsNative", "Studio")
+        self.msys_custom = self.settings.value("msys_root", "", type=str)
+        self.adb_custom = self.settings.value("adb_exe", "", type=str)
+        self.apply_saved_paths()
+        self.install_queue = []
+        self.install_folder = ""
+        self.install_active = None
         self.busy = False
         self.pending_id = ""
         self.latest = {}
@@ -164,6 +171,7 @@ class Studio(QMainWindow):
         self.control_proc = QProcess(self)
         self.control_proc.finished.connect(self.control_finished)
         self.init_ui()
+        self.check_tools(log=False)
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self.refresh_status)
         self.poll_timer.start(3500)
@@ -387,12 +395,50 @@ class Studio(QMainWindow):
         v.addWidget(c); v.addStretch(); return page
 
     def page_tools(self):
-        page, v = self.page("Tools & setup", "Check the Windows toolchain, install the shader packer environment, and open project documentation.")
-        c, body = card("Windows environment")
-        body.addWidget(muted("MSYS2 UCRT64 GCC, CMake, zlib, patch; Python 3.14; .NET 10; Capstone; lz4; zbic; PyCryptodome; SPIRV-Tools and ADB."))
-        body.addLayout(row(button("Run full preflight", self.preflight, True),
-                           button("Set up packer environment", self.setup_env),
-                           button("Check tools", self.check_env)))
+        page, v = self.page("Tools & setup",
+            "Install prerequisites from Studio. Checking never downloads anything, waits for input, or changes your system.")
+        c, body = card("Dependency manager",
+            "Core tools are required for Windows game packs. JDK and Android SDK/NDK are optional for building Android APKs.")
+        self.dependency_rows = {}
+        for key, name, action in (
+            ("msys", "MSYS2 (package manager)", "Install"),
+            ("ucrt", "UCRT64 compiler + CMake + zlib + patch", "Install"),
+            ("adb", "Android Platform-Tools / ADB", "Install"),
+            ("packer", "Python 3.14 + .NET 10 + shader packer", "Install"),
+            ("java", "JDK 21 (APK build)", "Install"),
+            ("sdk", "Android SDK 36 + NDK 28.2 (APK build)", "Get Android Studio"),
+        ):
+            line = QHBoxLayout()
+            name_label = QLabel(name)
+            name_label.setMinimumWidth(310)
+            detail = QLabel("Not checked")
+            detail.setObjectName("Muted")
+            detail.setWordWrap(True)
+            detail.setMinimumWidth(270)
+            install = button(action, lambda checked=False, k=key: self.install_dependency(k))
+            install.setMaximumWidth(170)
+            line.addWidget(name_label)
+            line.addWidget(detail, 1)
+            line.addWidget(install)
+            self.dependency_rows[key] = (detail, install)
+            body.addLayout(line)
+        body.addLayout(row(button("Check tools", self.check_tools, True),
+                           button("Install missing core tools", self.install_missing),
+                           button("Verify packer", self.verify_packer)))
+        body.addWidget(muted("Installations run as visible, cancellable tasks with live logs. Winget may show a Windows elevation dialog. Full preflight compiles and tests the importer only after the required compiler is present."))
+        v.addWidget(c)
+
+        c, body = card("Custom installation paths", "Use these fields when tools were installed outside their usual locations.")
+        self.msys_path = QLineEdit(self.msys_custom)
+        self.msys_path.setPlaceholderText("Default: C:\\msys64")
+        self.adb_path = QLineEdit(self.adb_custom)
+        self.adb_path.setPlaceholderText("Automatically search ADB PATH, WinGet, Android SDK")
+        body.addLayout(row(labelled("MSYS2 root", self.msys_path),
+                           button("Browse…", lambda: self.browse_dir(self.msys_path))))
+        body.addLayout(row(labelled("adb.exe file", self.adb_path),
+                           button("Browse…", lambda: self.pick_one(self.adb_path, "Android Debug Bridge (adb.exe);;Executables (*.exe)"))))
+        body.addLayout(row(button("Save paths and recheck", self.save_tool_paths),
+                           button("Run full preflight", self.preflight)))
         v.addWidget(c)
         c, body = card("Repository / local files")
         body.addWidget(muted(str(self.repo)))
@@ -434,7 +480,7 @@ class Studio(QMainWindow):
     def run_task(self, cmd, label="Working"):
         if self.busy:
             self.warn("Task running", "Stop or finish the current task first.")
-            return
+            return False
         self.busy = True; self.stop_btn.setEnabled(True)
         self.task_label.setText(label); self.progress.setRange(0, 0)
         self.write_log("▶  " + label)
@@ -442,16 +488,23 @@ class Studio(QMainWindow):
         env = QProcessEnvironment()
         for key, value in core.builder_environment(self.repo).items():
             env.insert(key, value)
+        if self.install_active == "ucrt":
+            env.insert("MSYSTEM", "UCRT64")
+            env.insert("CHERE_INVOKING", "yes")
         self.task.setProcessEnvironment(env)
         self.task.setWorkingDirectory(str(self.repo))
         self.task.start(str(cmd[0]), [str(x) for x in cmd[1:]])
         if not self.task.waitForStarted(1600):
             self.task_failed("Cannot start process: " + self.task.errorString())
+            return False
+        return True
 
     def task_failed(self, message):
         self.busy = False; self.stop_btn.setEnabled(False)
         self.progress.setRange(0, 100); self.progress.setValue(0)
         self.task_label.setText("Failed")
+        self.install_queue.clear()
+        self.install_active = None
         self.warn("Could not start", message)
 
     def task_output(self):
@@ -477,6 +530,19 @@ class Studio(QMainWindow):
             self.progress.setRange(0, 100); self.progress.setValue(0)
             self.task_label.setText("Exit code " + str(code))
             self.write_log("✗  Task exited with code " + str(code))
+        installed = self.install_active
+        self.install_active = None
+        if installed:
+            self.check_tools(log=False)
+            if code != 0:
+                self.install_queue.clear()
+                self.write_log("Installation failed; remaining installation steps cancelled.")
+            elif self.install_queue:
+                QTimer.singleShot(250, self._install_next)
+            else:
+                self.write_log("Installation finished. Check the dependency status above.")
+            if installed == "adb":
+                QTimer.singleShot(500, self.refresh_devices)
         self.refresh_status()
 
     def stop_task(self):
@@ -487,6 +553,7 @@ class Studio(QMainWindow):
         if sys.platform == "win32" and pid:
             subprocess.Popen(["taskkill", "/PID", str(pid), "/T", "/F"], creationflags=subprocess.CREATE_NO_WINDOW)
         else: self.task.kill()
+        self.install_queue.clear()
         self.write_log("Stopping process tree…")
 
     def build_game(self, dry=False):
@@ -504,8 +571,16 @@ class Studio(QMainWindow):
             self.warn("Build prerequisites", e)
 
     def refresh_devices(self):
+        adb = deps.adb_executable(self.adb_custom)
+        if not adb:
+            self.device_info.setText("ADB not installed. Open Tools & setup and choose Install under Android Platform-Tools.")
+            self.device_combo.blockSignals(True)
+            self.device_combo.clear()
+            self.device_combo.addItem("ADB required", None)
+            self.device_combo.blockSignals(False)
+            return
         try:
-            p = subprocess.run(["adb", "devices", "-l"], capture_output=True, text=True, timeout=6,
+            p = subprocess.run([adb, "devices", "-l"], capture_output=True, text=True, timeout=6,
                                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
             if p.returncode: raise RuntimeError(p.stderr)
             serials = []
@@ -528,7 +603,8 @@ class Studio(QMainWindow):
     def refresh_status(self, *_):
         serial = self.device()
         if not serial or self.poll_proc.state() != QProcess.ProcessState.NotRunning: return
-        self.poll_proc.start("adb", core.status_command(serial)[1:])
+        cmd = core.status_command(serial)
+        self.poll_proc.start(cmd[0], cmd[1:])
 
     def poll_finished(self, code, status):
         if code: return
@@ -692,19 +768,123 @@ class Studio(QMainWindow):
         if os.name == "nt": os.startfile(str(path))
         else: subprocess.Popen(["xdg-open", str(path)])
 
+    def apply_saved_paths(self):
+        if self.msys_custom:
+            os.environ["PEANUTS_MSYS2_ROOT"] = self.msys_custom
+            os.environ["PEANUTS_MSYS2_UCRT64"] = str(Path(self.msys_custom) / "ucrt64/bin")
+        if self.adb_custom:
+            os.environ["PEANUTS_ADB"] = self.adb_custom
+
+    def save_tool_paths(self):
+        self.msys_custom = self.msys_path.text().strip()
+        self.adb_custom = self.adb_path.text().strip()
+        self.settings.setValue("msys_root", self.msys_custom)
+        self.settings.setValue("adb_exe", self.adb_custom)
+        for key in ("PEANUTS_MSYS2_ROOT", "PEANUTS_MSYS2_UCRT64", "PEANUTS_ADB"):
+            os.environ.pop(key, None)
+        self.apply_saved_paths()
+        self.check_tools()
+        self.refresh_devices()
+
+    def check_tools(self, log=True):
+        """Read-only, finite, synchronous file checks. No setup, prompts or downloads."""
+        results = deps.dependency_status(self.repo, adb=self.adb_custom, root=self.msys_custom)
+        self.dep_results = {key: (ok, detail, optional) for key, ok, detail, optional in results}
+        for key, ok, detail, optional in results:
+            label, install = self.dependency_rows[key]
+            label.setText(("✓  " if ok else "✕  ") + detail)
+            label.setStyleSheet("color:" + ("#91ddb2" if ok else "#f0bd80") + ";")
+            install.setEnabled(not ok)
+            if log:
+                self.write_log(("[OK] " if ok else "[MISSING] ") + key + ": " + detail)
+        if log:
+            self.write_log("Dependency scan finished. Nothing was installed or changed.")
+        return self.dep_results
+
+    def install_missing(self):
+        if self.busy:
+            self.warn("Task running", "Finish or stop the current task before installing dependencies.")
+            return
+        results = self.check_tools(log=False)
+        missing = [k for k in ("msys", "ucrt", "adb", "packer") if not results[k][0]]
+        if not missing:
+            self.write_log("All core tools appear installed. Run Verify packer for full verification.")
+            return
+        if QMessageBox.question(self, "Install core prerequisites",
+                                "Install: " + ", ".join(missing) + "?\n\n"
+                                "This uses Windows Package Manager, MSYS2 pacman, and the project's packer installer. "
+                                "You may need a network connection and Windows may request elevation.") != QMessageBox.StandardButton.Yes:
+            return
+        if "packer" in missing:
+            folder = QFileDialog.getExistingDirectory(self, "Choose a folder for the Python/.NET packer environment", str(Path.home()))
+            if not folder:
+                return
+            self.install_folder = folder
+        self.install_queue = missing
+        self._install_next()
+
+    def install_dependency(self, kind):
+        if self.busy:
+            self.warn("Task running", "Stop or finish the current task before starting an installation.")
+            return
+        install_kind = "studio" if kind == "sdk" else kind
+        names = {"msys":"MSYS2", "ucrt":"MSYS2 UCRT64 toolchain", "adb":"Android Platform-Tools (ADB)",
+                 "packer":"Python/.NET shader packer", "java":"Temurin JDK 21", "studio":"Android Studio"}
+        if QMessageBox.question(self, "Install prerequisite", "Install " + names[install_kind] +
+                                " on this PC? This downloads official packages; elevation may be required.") != QMessageBox.StandardButton.Yes:
+            return
+        if install_kind == "packer":
+            folder = QFileDialog.getExistingDirectory(self, "Select folder for packer files", str(Path.home()))
+            if not folder: return
+            self.install_folder = folder
+        self.install_queue = [install_kind]
+        self._install_next()
+
+    def _install_next(self):
+        if not self.install_queue:
+            return
+        kind = self.install_queue.pop(0)
+        try:
+            cmd = deps.install_command(kind, self.repo, root=self.msys_custom, folder=self.install_folder)
+        except (ValueError, RuntimeError) as exc:
+            self.install_queue.clear()
+            self.warn("Installation prerequisites", exc)
+            return
+        self.install_active = kind
+        if not self.run_task(cmd, "Installing " + kind):
+            self.install_active = None
+
+    def verify_packer(self):
+        """Run the real packer checker; it now exits without auto-install or stdin."""
+        if self.busy:
+            self.warn("Task running", "Finish the active task first.")
+            return
+        if not self.check_tools(log=False).get("packer", (False,))[0]:
+            self.warn("Packer not installed", "Choose Install next to Python/.NET shader packer first.")
+            return
+        self.run_task(["cmd.exe", "/d", "/c", str(self.repo / "scripts/bananative.bat"), "check"],
+                      "Verifying installed packer (no changes)")
+
     def preflight(self):
-        cmd = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-               str(self.repo / "peanuts/scripts/windows-builder-check.ps1")]
-        self.run_task(cmd, "Windows toolchain preflight")
+        if self.busy:
+            self.warn("Task running", "Finish the active task first.")
+            return
+        check = self.check_tools(log=False)
+        missing = [key for key in ("msys", "ucrt", "packer") if not check[key][0]]
+        if missing:
+            self.write_log("[MISSING] Preflight cannot run: " + ", ".join(missing) +
+                           ". Install the missing dependencies above first.")
+            self.show_page(5)
+            return
+        self.run_task(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                       "-File", str(self.repo / "peanuts/scripts/windows-builder-check.ps1")],
+                      "Windows toolchain preflight")
 
     def setup_env(self):
-        folder = QFileDialog.getExistingDirectory(self, "Folder for the packer environment")
-        if not folder: return
-        cmd = ["cmd.exe", "/d", "/c", str(self.repo / "scripts/bananative.bat"), "setup", folder]
-        self.run_task(cmd, "Installing packer tools")
+        self.install_dependency("packer")
 
     def check_env(self):
-        self.run_task(["cmd.exe","/d","/c", str(self.repo / "scripts/bananative.bat"),"check"], "Checking packer environment")
+        self.check_tools()
 
     def copy_log(self): QApplication.clipboard().setText(self.console.toPlainText())
     def save_log(self):
