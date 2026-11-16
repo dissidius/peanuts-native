@@ -23,12 +23,13 @@ PATCHES = ("ooz-port.patch", "ooz-guards.patch")
 
 
 def tool(name, prefix):
-    path = shutil.which(name)
-    if path:
-        return path
+    # The PATH on Windows CI may contain Strawberry Perl's ancient patch.exe:
+    # it crashes on modern patch headers. Prefer MSYS2's own vetted utility.
     root = Path(os.environ.get("PEANUTS_MSYS2_ROOT", "C:/msys64"))
     exe = root / prefix / (name + ".exe")
-    return str(exe) if exe.is_file() else None
+    if exe.is_file():
+        return str(exe)
+    return shutil.which(name)
 
 
 def build(output):
