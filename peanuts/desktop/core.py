@@ -117,7 +117,7 @@ def gradle_command(repo, stage, games, extra=None):
         raise ValueError("Game IDs must be 16-digit hex values with a profile under dm/games.")
     gradle = repo / "android/app/gradlew.bat"
     if not gradle.is_file(): raise FileNotFoundError("Android Gradle wrapper not found.")
-    cmd = ["cmd.exe", "/d", "/c", str(gradle), "-PnxApp=peanuts",
+    cmd = ["cmd.exe", "/d", "/c", str(gradle), "--project-dir", str(repo / "android/app"), "-PnxApp=peanuts",
            "-PnxGenericHost=true", "-PnxPackStage=" + str(stage.resolve())]
     if title_ids: cmd.append("-PnxGames=" + ",".join(title_ids))
     cmd += list(extra or []) + ["apk"]
