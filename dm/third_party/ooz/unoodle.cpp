@@ -140,12 +140,12 @@ int main() {
   if (sf && g_stream) {
     FILE *f = fopen(sf, "a");
     if (f) {
-      char line[2048]; int n = snprintf(line, sizeof line, "pid=%d streams=%llu", (int)
 #ifdef _WIN32
-          _getpid(),
+      int pid = _getpid();
 #else
-          getpid(),
-#endif (unsigned long long)g_stream);
+      int pid = getpid();
+#endif
+      char line[2048]; int n = snprintf(line, sizeof line, "pid=%d streams=%llu", pid, (unsigned long long)g_stream);
       for (int k = 0; k < 16; k++)
         if (st[k].ok || st[k].bad)
           n += snprintf(line + n, sizeof line - n, " | type=%d(%s) ok=%llu failed=%llu in=%llu out=%llu seconds=%.6f", k == 15 ? -1 : k, type_name(k == 15 ? -1 : k),
