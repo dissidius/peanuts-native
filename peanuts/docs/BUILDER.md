@@ -24,6 +24,47 @@ On macOS and Linux the importer also needs zlib's headers (part of the Xcode com
 
 Set `NX_KEYS` to your `prod.keys`, or pass `--keys`. The default is `~/.switch/prod.keys`.
 
+### Windows PC: build on Windows, play on Android
+
+This is the **Android game pack** builder. It is not a Windows game runtime and it does not compile the Peanuts Native APK. Install the Peanuts Native APK on the phone separately; once Windows has produced the pack, you can transfer the result with `--push`.
+
+**One-time setup (native Windows, no WSL required for the PC packer):**
+
+1. Install [MSYS2](https://www.msys2.org/) to its normal `C:\\msys64` location. Open **MSYS2 UCRT64** and install the importer toolchain:
+
+   ```sh
+   pacman -Syu
+   pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-make mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-zlib
+   ```
+
+   If `pacman -Syu` asks you to restart the MSYS2 shell, reopen UCRT64 before the second command. The Windows batch builder automatically adds the standard UCRT64 `bin` to PATH if installed there. For a non-standard MSYS2 install, add its `ucrt64\\bin` to Windows PATH yourself.
+
+2. In **PowerShell** at the root of this checkout, run:
+
+   ```powershell
+   .\peanuts\scripts\windows-builder-check.ps1
+   ```
+
+   This compiles the **Windows** `nximport_cli.exe`, runs native C tests with synthetic data, runs the builder's Python tests, and checks/bootstrap-installs the packer environment (Python 3.14, .NET 10, shader tools). The first packer setup downloads packages from conda-forge; give it a folder on a drive with free space. This preflight does **not** require a game or console keys.
+
+3. Install Android SDK **platform-tools** on Windows and enable USB debugging on the phone. Check `adb devices`; the device must say `device`, not `unauthorized`.
+
+**Build and send a game (Command Prompt or PowerShell):**
+
+```bat
+peanuts\scripts\peanuts-build.bat "D:\\Dumps\\Game.nsp" "D:\\Dumps\\Update.nsp" --keys "D:\\Keys\\prod.keys" --push
+```
+
+Or for a game already in the project's `.nup` format:
+
+```bat
+peanuts\scripts\peanuts-build.bat "D:\\Dumps\\Game [01006BB00C6F0000][v131072].nup" --push
+```
+
+Without `--push`, the `.nup` and `<title ID>-work\\android-pack` stay on the computer. With it, the prepared pack and game go to the phone's `/sdcard/Peanut Roms` folder. Set **Settings → Library** in the Android Peanuts app to scan that directory.
+
+**Important limits:** The Windows path still needs testing with actual game dumps and Android playback. The synthetic preflight proves only that the Windows importer and builder utilities run. Games requiring GPU shader capture or special Unreal/Oodle decoding may still need the Android on-device build step; see [Games the builder refuses](#games-the-builder-refuses). Do not upload or commit your own keys, game files or generated packs.
+
 ### Linux
 
 Two ways to get the packer environment. Either way the importer needs cmake, gcc and zlib's headers, and `--push` needs `adb`.
