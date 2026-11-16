@@ -300,7 +300,7 @@ class Studio(QMainWindow):
             self.write_log("[ADB] No authorized device selected. Connect the phone under Android device.")
 
     def fetch_companions(self):
-        self.control("companion", {"do": "list"})
+        self.control("companion", {"do": "list", "all": "true"})
 
     def companion_action(self, tid, operation):
         if not core.TITLE.fullmatch(str(tid or "")):
