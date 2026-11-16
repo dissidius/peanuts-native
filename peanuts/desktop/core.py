@@ -126,3 +126,29 @@ def gradle_command(repo, stage, games, extra=None):
 
 def status_command(serial):
     return adb_command(serial, ["shell", "cat", STATUS])
+
+
+def wsl_stage_command(repo, work):
+    """Prepare the *real* Android ARM64 stage through configured WSL2 Linux.
+
+    The existing Linux/zsh build compiles Android CPython, NativeAOT translator
+    and SPIR-V Tools using the Android NDK. It requires zsh, Linux .NET 10 SDK,
+    ANDROID_NDK_HOME, cmake/ninja, network, and a working WSL2 distribution.
+    """
+    if os.name != "nt":
+        raise RuntimeError("WSL stage generation is available on Windows only.")
+    import shlex
+    work = Path(work).expanduser().resolve()
+    if not work.is_dir():
+        raise ValueError("Create/select an existing Windows work folder for the stage.")
+    def quote(p):
+        return shlex.quote(str(p))
+    script = (
+        "set -e; "
+        + "r=$(wslpath -a -u " + quote(repo) + "); "
+        + "w=$(wslpath -a -u " + quote(work) + "); "
+        + "test -d \"$r/android/ondevice\"; "
+        + "test -n \"$ANDROID_NDK_HOME\" || { echo 'ANDROID_NDK_HOME is not set inside WSL'; exit 1; }; "
+        + "cd \"$r\"; zsh peanuts/scripts/ondevice-stage.sh \"$w\" all"
+    )
+    return ["wsl.exe", "--exec", "bash", "-lc", script]
