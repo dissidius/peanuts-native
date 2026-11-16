@@ -256,12 +256,17 @@ class Studio(QMainWindow):
         cb = QHBoxLayout()
         self.task_label = QLabel("Ready"); self.task_label.setObjectName("Status")
         cb.addWidget(self.task_label); cb.addStretch()
-        cb.addWidget(button("Copy log", self.copy_log)); cb.addWidget(button("Save log", self.save_log))
+        self.log_toggle = button("Show logs", self.toggle_logs)
+        cb.addWidget(self.log_toggle)
+        cb.addWidget(button("Copy log", self.copy_log))
+        cb.addWidget(button("Save log", self.save_log))
         self.stop_btn = button("Stop task", self.stop_task); self.stop_btn.setEnabled(False); cb.addWidget(self.stop_btn)
         cv.addLayout(cb)
         self.progress = QProgressBar(); self.progress.setRange(0, 100)
+        self.progress.setVisible(False)
         cv.addWidget(self.progress)
-        self.console = QTextEdit(); self.console.setReadOnly(True); self.console.setFixedHeight(142)
+        self.console = QTextEdit(); self.console.setReadOnly(True); self.console.setFixedHeight(146)
+        self.console.setVisible(False)
         self.console.setFont(QFont("Consolas", 10))
         self.console.document().setMaximumBlockCount(5000)
         cv.addWidget(self.console)
@@ -272,6 +277,11 @@ class Studio(QMainWindow):
     def wrap_page(self, page):
         scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setWidget(page); return scroll
+
+    def toggle_logs(self):
+        expanded = not self.console.isVisible()
+        self.console.setVisible(expanded)
+        self.log_toggle.setText("Hide logs" if expanded else "Show logs")
 
     def show_page(self, index):
         self.pages.setCurrentIndex(index)
@@ -568,6 +578,9 @@ class Studio(QMainWindow):
         self.task_serial += 1
         serial = self.task_serial
         self.task_label.setText(label); self.progress.setRange(0, 0)
+        self.progress.show()
+        if not self.console.isVisible():
+            self.toggle_logs()
         self.write_log("▶  " + label)
         # Deliberately do not print command argv: it may contain the private path to keys.
         env = QProcessEnvironment()
@@ -600,6 +613,7 @@ class Studio(QMainWindow):
     def task_failed(self, message):
         self.busy = False; self.stop_btn.setEnabled(False)
         self.progress.setRange(0, 100); self.progress.setValue(0)
+        self.progress.hide()
         self.task_label.setText("Failed")
         self.task_mode = ""
         self.install_queue.clear()
@@ -631,6 +645,7 @@ class Studio(QMainWindow):
             self.progress.setRange(0, 100); self.progress.setValue(0)
             self.task_label.setText("Exit code " + str(code))
             self.write_log("✗  Task exited with code " + str(code))
+        self.progress.hide()
         if completed_mode.startswith("Verifying installed packer"):
             label, install = self.dependency_rows["packer"]
             if code == 0:
