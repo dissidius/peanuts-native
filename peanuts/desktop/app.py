@@ -1030,7 +1030,17 @@ def main():
         QMessageBox.critical(None, "Peanuts Studio", str(e))
         return 2
     win.show()
-    if '--smoke' in sys.argv:
+    if '--preview' in sys.argv:
+        # Actual UI capture on the Windows CI runner, without a mock device or fake library.
+        at = sys.argv.index('--preview')
+        destination = sys.argv[at + 1] if at + 1 < len(sys.argv) else 'PeanutsStudio-preview.png'
+        def capture():
+            win.show_page(win.nav_map["overview"])
+            app.processEvents()
+            win.grab().save(destination, "PNG")
+            app.quit()
+        QTimer.singleShot(900, capture)
+    elif '--smoke' in sys.argv:
         QTimer.singleShot(800, app.quit)
     return app.exec()
 
