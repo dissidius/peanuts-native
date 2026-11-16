@@ -1019,7 +1019,7 @@ class Studio(QMainWindow):
         self.dep_results = {key: (ok, detail, optional) for key, ok, detail, optional in results}
         for key, ok, detail, optional in results:
             label, install = self.dependency_rows[key]
-            label.set_status(("✓  Ready · " if ok else "⚠  Missing · ") + detail, ok)
+            label.set_status(("✓  Ready · " if ok else "⚠  ") + detail, ok)
             install.setText("Installed" if ok else
                             ("Get Android Studio" if key == "sdk" else "Install"))
             install.setEnabled(not ok)
