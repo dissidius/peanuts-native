@@ -45,7 +45,7 @@ jobs:
             mingw-w64-ucrt-x86_64-zlib
       - name: Compile importer and run Windows builder tests
         env:
-          PEANUTS_MSYS2_UCRT64: ${{ steps.msys2.outputs.msys2-location }}\\ucrt64\\bin
+          PEANUTS_MSYS2_UCRT64: ${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin
         shell: pwsh
         run: |
           ./peanuts/scripts/windows-builder-check.ps1 -SkipPackerEnvironment
