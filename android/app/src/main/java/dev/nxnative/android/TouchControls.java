@@ -45,6 +45,7 @@ final class TouchControls extends View {
     private boolean shown = true, gamepad;
     private boolean button = true;   // the show / hide button is there (toggleButton): without it the controls are never hidden by it
     private int mode = MODE_AUTO;   // the "On-screen controls" setting (setMode)
+    private int skinStyle = SKIN_SWITCH;   // appearance and stick arrangement, not the host's Nintendo input bits
     private float opacity, scale;
     private boolean haptics;
 
@@ -101,6 +102,7 @@ final class TouchControls extends View {
         opacity = prefs().getFloat("opacity", 0.6f);
         scale = prefs().getFloat("scale", 1f);
         haptics = prefs().getBoolean("haptics", true);
+        skinStyle = skin(c);
         shown = prefs().getBoolean("shown", true);
         line.setStyle(Paint.Style.STROKE);
         text.setTextAlign(Paint.Align.CENTER);
@@ -121,6 +123,26 @@ final class TouchControls extends View {
     private boolean active() { return visible() && (shown || !button) && (mode == MODE_ON || !gamepad); }
 
     static final int MODE_AUTO = 0, MODE_ON = 1, MODE_OFF = 2;
+    static final int SKIN_SWITCH = 0, SKIN_DUALSENSE = 1;
+    static final String[] SKIN_NAMES = {"Switch Pro (classic)", "DualSense (PlayStation)"};
+    static int skin(Context c) {
+        int style = Prefs.open(c, "touch_controls").getInt("skin", SKIN_SWITCH);
+        return style >= 0 && style < SKIN_NAMES.length ? style : SKIN_SWITCH;
+    }
+    static void skin(Context c, int style) {
+        if (style < 0 || style >= SKIN_NAMES.length) throw new IllegalArgumentException("unknown control skin");
+        Prefs.open(c, "touch_controls").edit().putInt("skin", style).commit();
+    }
+    /** Switch without changing the host's A/B/X/Y input mapping or existing layout edits. */
+    void setSkin(int style) {
+        if (style == skinStyle) return;
+        skin(getContext(), style);
+        skinStyle = style;
+        prof = null; // reload independent dualsense layout edits; legacy Switch keys remain unchanged
+        relayout();
+        invalidate();
+        Native.note("on-screen controls skin: " + SKIN_NAMES[style]);
+    }
     static final String[] MODE_NAMES = {"Auto", "On", "Off"};
     /** The "On-screen controls" setting, kept for every game: Auto (hidden while a gamepad is connected), On or Off */
     static int mode(Context c) { int m = Prefs.open(c, "touch_controls").getInt("mode", MODE_AUTO); return m >= 0 && m < MODE_NAMES.length ? m : MODE_AUTO; }
@@ -209,15 +231,19 @@ final class TouchControls extends View {
         add(BUTTON, R, 0, SHAPE_SHOULDER, w - m - 3 * rSh - 10 * d, shY, rSh, "R");
         add(BUTTON, MINUS, 0, SHAPE_ROUND, m + 4 * rSh + 22 * d + rSmall, shY, rSmall, "−");
         add(BUTTON, PLUS, 0, SHAPE_ROUND, w - m - 4 * rSh - 22 * d - rSmall, shY, rSmall, "+");
-        // Left: the stick high, the D-pad low, centred in the bar when it is wide enough
+        // Switch: offset sticks (left high, right low). DualSense: symmetrical sticks low and D-pad high.
+        // Only the layout and icons change: A/B/X/Y and the shoulder bits sent to the game stay unchanged.
         float top = shY + rSh + 10 * d;
-        float lx = Math.max(m + rStick, bar / 2), ly = Math.max(y0 + bh * 0.45f, top + rStick);
-        int ls = add(STICK, 0, 0, SHAPE_ROUND, lx, ly, rStick, "");
-        add(DPAD, UP | DOWN | LEFT | RIGHT, 0, SHAPE_ROUND, Math.max(m + rPad, bar / 2), h - m - rPad, rPad, "");
+        float highY = Math.max(y0 + bh * 0.45f, top + rStick);
+        boolean dual = skinStyle == SKIN_DUALSENSE;
+        float lx = Math.max(m + rStick, bar / 2), ly = dual ? h - m - rStick : highY;
+        add(STICK, 0, 0, SHAPE_ROUND, lx, ly, rStick, "");
+        add(DPAD, UP | DOWN | LEFT | RIGHT, 0, SHAPE_ROUND, Math.max(m + rPad, bar / 2),
+                dual ? highY : h - m - rPad, rPad, "");
         float diag = (rStick + rClick + 6 * d) * 0.7071f;
-        add(BUTTON, LS, 0, SHAPE_ROUND, lx + diag, ly + diag, rClick, "L3");
-        // Right: the face buttons high (A right, B bottom, X top, Y left, as on a Switch), the right stick low
-        float fx = Math.min(w - m - rFace - off, w - bar / 2), fy = ly;
+        add(BUTTON, LS, 0, SHAPE_ROUND, lx + diag, ly + (dual ? -diag : diag), rClick, "L3");
+        // On the right the same Nintendo bit positions correspond to Circle/Cross/Triangle/Square.
+        float fx = Math.min(w - m - rFace - off, w - bar / 2), fy = highY;
         add(BUTTON, A, 0, SHAPE_ROUND, fx + off, fy, rFace, "A");
         add(BUTTON, B, 0, SHAPE_ROUND, fx, fy + off, rFace, "B");
         add(BUTTON, X, 0, SHAPE_ROUND, fx, fy - off, rFace, "X");
@@ -289,21 +315,25 @@ final class TouchControls extends View {
         return placeX != 0.5f || placeY != defY();
     }
 
+    private String layoutProfile() {
+        return prof + (skinStyle == SKIN_DUALSENSE ? "#dualsense" : "");
+    }
+
     private void load() {
         button = toggleButton(getContext());
         for (int g = 0; g < GROUPS; g++) {
-            String[] v = prefs().getString("group" + g + "@" + prof, "0 0 1").split(" ");
+            String[] v = prefs().getString("group" + g + "@" + layoutProfile(), "0 0 1").split(" ");
             try { gdx[g] = Float.parseFloat(v[0]); gdy[g] = Float.parseFloat(v[1]); gsc[g] = Float.parseFloat(v[2]); }
             catch (RuntimeException e) { gdx[g] = 0; gdy[g] = 0; gsc[g] = 1; }
         }
-        String[] v = prefs().getString("picture@" + prof, "0.5 " + defY()).split(" ");
+        String[] v = prefs().getString("picture@" + layoutProfile(), "0.5 " + defY()).split(" ");
         try { placeX = Float.parseFloat(v[0]); placeY = Float.parseFloat(v[1]); } catch (RuntimeException e) { placeX = 0.5f; placeY = defY(); }
     }
 
     private void saveLayout() {
         SharedPreferences.Editor e = prefs().edit();
-        for (int g = 0; g < GROUPS; g++) e.putString("group" + g + "@" + prof, gdx[g] + " " + gdy[g] + " " + gsc[g]);
-        e.putString("picture@" + prof, placeX + " " + placeY).commit();   // commit: the game process may end right after (Stop)
+        for (int g = 0; g < GROUPS; g++) e.putString("group" + g + "@" + layoutProfile(), gdx[g] + " " + gdy[g] + " " + gsc[g]);
+        e.putString("picture@" + layoutProfile(), placeX + " " + placeY).commit();   // commit: the game process may end right after (Stop)
     }
 
     private void relayout() { layout(getWidth(), getHeight()); }
@@ -537,11 +567,48 @@ final class TouchControls extends View {
                     c.drawCircle(cx[i], cy[i], r[i], fill);
                     c.drawCircle(cx[i], cy[i], r[i], line);
                 }
-                text.setColor(held ? Color.argb(alpha(1f), 0, 0, 0) : Color.argb(alpha(1f), 255, 255, 255));
-                text.setTextSize(r[i] * (label[i].length() > 1 ? 0.72f : 0.95f));
-                c.drawText(label[i], cx[i], cy[i] - (text.descent() + text.ascent()) / 2, text);
+                if (skinStyle == SKIN_DUALSENSE && (buttons[i] & (A | B | X | Y)) != 0) {
+                    dualSenseSymbol(c, buttons[i], cx[i], cy[i], r[i], held);
+                } else {
+                    String name = skinStyle == SKIN_DUALSENSE ? dualSenseLabel(buttons[i], label[i]) : label[i];
+                    text.setColor(held ? Color.argb(alpha(1f), 0, 0, 0) : Color.argb(alpha(1f), 255, 255, 255));
+                    text.setTextSize(r[i] * (name.length() > 1 ? 0.72f : 0.95f));
+                    c.drawText(name, cx[i], cy[i] - (text.descent() + text.ascent()) / 2, text);
+                }
             }
         }
+    }
+
+    private static String dualSenseLabel(long bit, String original) {
+        if (bit == ZL) return "L2";
+        if (bit == ZR) return "R2";
+        if (bit == L) return "L1";
+        if (bit == R) return "R1";
+        if (bit == MINUS) return "Cr";  // Create (small circular touch target)
+        if (bit == PLUS) return "Op";   // Options
+        return original;
+    }
+
+    /** Crisp vector PlayStation face shapes, so no special glyph font or image resource is required. */
+    private void dualSenseSymbol(Canvas c, long bit, float x, float y, float radius, boolean held) {
+        int color = bit == X ? Color.rgb(105, 205, 122)   // Triangle: top Nintendo X
+                : bit == A ? Color.rgb(241, 113, 130)      // Circle: right Nintendo A
+                : bit == Y ? Color.rgb(218, 137, 226)      // Square: left Nintendo Y
+                : Color.rgb(105, 165, 252);               // Cross: bottom Nintendo B
+        line.setColor(held ? Color.argb(alpha(1f), 20, 24, 34)
+                : Color.argb(alpha(1f), Color.red(color), Color.green(color), Color.blue(color)));
+        float z = radius * 0.44f;
+        line.setStrokeWidth(Math.max(1.6f * getResources().getDisplayMetrics().density, radius * 0.11f));
+        if (bit == A) c.drawCircle(x, y, z, line);
+        else if (bit == Y) c.drawRect(x - z, y - z, x + z, y + z, line);
+        else if (bit == X) {
+            path.reset(); path.moveTo(x, y - z); path.lineTo(x + z, y + z * 0.82f);
+            path.lineTo(x - z, y + z * 0.82f); path.close(); c.drawPath(path, line);
+        } else {
+            c.drawLine(x - z, y - z, x + z, y + z, line);
+            c.drawLine(x + z, y - z, x - z, y + z, line);
+        }
+        line.setStrokeWidth(Math.max(1.5f, 1.6f * getResources().getDisplayMetrics().density));
     }
 
     /** The editor: the picture's outline, each group's frame (the one held filled), the buttons along the top and what to do */
@@ -626,6 +693,19 @@ final class TouchControls extends View {
         mg.check(4000 + mode);
         mg.setOnCheckedChangeListener((g, id) -> { mode(ctx, id - 4000); setMode(id - 4000); });
         box.addView(mg);
+        TextView skinTitle = new TextView(ctx);
+        skinTitle.setText("Virtual controller style (changes the on-screen buttons and stick placement)");
+        RadioGroup skins = new RadioGroup(ctx);
+        skins.setOrientation(RadioGroup.VERTICAL);
+        for (int i = 0; i < SKIN_NAMES.length; i++) {
+            RadioButton b = new RadioButton(ctx);
+            b.setId(4200 + i);
+            b.setText(SKIN_NAMES[i]);
+            skins.addView(b);
+        }
+        skins.check(4200 + skinStyle);
+        skins.setOnCheckedChangeListener((g, id) -> { if (id >= 4200 && id < 4200 + SKIN_NAMES.length) setSkin(id - 4200); });
+        box.addView(skinTitle); box.addView(skins);
         TextView ol = new TextView(ctx), sl = new TextView(ctx);
         SeekBar os = new SeekBar(ctx), ss = new SeekBar(ctx);
         CheckBox hb = new CheckBox(ctx), lb = new CheckBox(ctx), tb = new CheckBox(ctx);
