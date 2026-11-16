@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QMainWindow,
     QMessageBox, QProgressBar, QPushButton, QScrollArea, QSpinBox,
     QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem, QTextEdit,
-    QVBoxLayout, QWidget, QHeaderView,
+    QVBoxLayout, QWidget, QHeaderView, QSizePolicy,
 )
 
 import core
@@ -144,6 +144,40 @@ class Sources(QListWidget):
         return [self.item(i).text() for i in range(self.count())]
 
 
+class ToolStatusLabel(QLabel):
+    """One readable status line, with complete untruncated path in its tooltip.
+
+    QLabels with word-wrap will otherwise grow unpredictably for long WinGet
+    install paths and collide with the buttons at smaller window widths.
+    """
+    def __init__(self):
+        super().__init__("Not checked")
+        self._full = "Not checked"
+        self.setObjectName("Muted")
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setWordWrap(False)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMinimumWidth(100)
+        self.setToolTip(self._full)
+
+    def set_status(self, value, ready):
+        self._full = str(value)
+        self.setToolTip(self._full)
+        self.setObjectName("ToolReady" if ready else "ToolMissing")
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self._refresh_text()
+
+    def _refresh_text(self):
+        available = max(80, self.contentsRect().width() - 8)
+        super().setText(self.fontMetrics().elidedText(
+            self._full, Qt.TextElideMode.ElideMiddle, available))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._refresh_text()
+
+
 class Studio(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -252,20 +286,39 @@ class Studio(QMainWindow):
         top.addWidget(button("↻  Devices", self.refresh_devices))
         ml.addLayout(top)
         ml.addWidget(self.pages, 1)
-        console, cv = card("Activity console", "Live output from the underlying Peanuts tools. No key contents are displayed.")
+        console = QFrame()
+        console.setObjectName("ActivityBar")
+        cv = QVBoxLayout(console)
+        cv.setContentsMargins(14, 7, 14, 7)
+        cv.setSpacing(7)
         cb = QHBoxLayout()
-        self.task_label = QLabel("Ready"); self.task_label.setObjectName("Status")
-        cb.addWidget(self.task_label); cb.addStretch()
+        cb.setSpacing(9)
+        console_title = QLabel("Activity")
+        console_title.setObjectName("Title")
+        cb.addWidget(console_title)
+        self.task_label = QLabel("Ready")
+        self.task_label.setObjectName("Status")
+        cb.addWidget(self.task_label)
+        cb.addStretch()
         self.log_toggle = button("Show logs", self.toggle_logs)
         cb.addWidget(self.log_toggle)
-        cb.addWidget(button("Copy log", self.copy_log))
-        cb.addWidget(button("Save log", self.save_log))
-        self.stop_btn = button("Stop task", self.stop_task); self.stop_btn.setEnabled(False); cb.addWidget(self.stop_btn)
+        self.log_copy = button("Copy log", self.copy_log)
+        self.log_save = button("Save log", self.save_log)
+        self.log_copy.setVisible(False)
+        self.log_save.setVisible(False)
+        cb.addWidget(self.log_copy)
+        cb.addWidget(self.log_save)
+        self.stop_btn = button("Stop task", self.stop_task)
+        self.stop_btn.setEnabled(False)
+        cb.addWidget(self.stop_btn)
         cv.addLayout(cb)
-        self.progress = QProgressBar(); self.progress.setRange(0, 100)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
         self.progress.setVisible(False)
         cv.addWidget(self.progress)
-        self.console = QTextEdit(); self.console.setReadOnly(True); self.console.setFixedHeight(146)
+        self.console = QTextEdit()
+        self.console.setReadOnly(True)
+        self.console.setFixedHeight(146)
         self.console.setVisible(False)
         self.console.setFont(QFont("Consolas", 10))
         self.console.document().setMaximumBlockCount(5000)
@@ -289,6 +342,8 @@ class Studio(QMainWindow):
     def toggle_logs(self):
         expanded = not self.console.isVisible()
         self.console.setVisible(expanded)
+        self.log_copy.setVisible(expanded)
+        self.log_save.setVisible(expanded)
         self.log_toggle.setText("Hide logs" if expanded else "Show logs")
 
     def show_page(self, index):
@@ -502,26 +557,31 @@ class Studio(QMainWindow):
         self.dependency_rows = {}
         for key, name, action in (
             ("msys", "MSYS2 (package manager)", "Install"),
-            ("ucrt", "UCRT64 compiler + CMake + zlib + patch", "Install"),
+            ("ucrt", "UCRT64 compiler, CMake, zlib and patch", "Install"),
             ("adb", "Android Platform-Tools / ADB", "Install"),
-            ("packer", "Python 3.14 + .NET 10 + shader packer", "Install"),
+            ("packer", "Python 3.14, .NET 10 and shader packer", "Install"),
             ("java", "JDK 21 (APK build)", "Install"),
             ("sdk", "Android SDK 36 + NDK 28.2 (APK build)", "Get Android Studio"),
         ):
-            line = QHBoxLayout()
+            line_frame = QFrame()
+            line_frame.setObjectName("ToolRow")
+            line = QHBoxLayout(line_frame)
+            line.setContentsMargins(12, 9, 12, 9)
+            line.setSpacing(13)
             name_label = QLabel(name)
-            name_label.setMinimumWidth(310)
-            detail = QLabel("Not checked")
-            detail.setObjectName("Muted")
-            detail.setWordWrap(True)
-            detail.setMinimumWidth(270)
+            name_label.setObjectName("ToolName")
+            name_label.setWordWrap(True)
+            name_label.setMinimumWidth(205)
+            name_label.setMaximumWidth(290)
+            detail = ToolStatusLabel()
             install = button(action, lambda checked=False, k=key: self.install_dependency(k))
-            install.setMaximumWidth(170)
-            line.addWidget(name_label)
-            line.addWidget(detail, 1)
-            line.addWidget(install)
+            install.setMinimumWidth(115)
+            install.setMaximumWidth(165)
+            line.addWidget(name_label, 3)
+            line.addWidget(detail, 5)
+            line.addWidget(install, 0)
             self.dependency_rows[key] = (detail, install)
-            body.addLayout(line)
+            body.addWidget(line_frame)
         body.addLayout(row(button("Check tools", lambda: self.check_tools(log=True), True),
                            button("Install missing core tools", self.install_missing),
                            button("Verify packer", self.verify_packer)))
@@ -657,12 +717,12 @@ class Studio(QMainWindow):
         if completed_mode.startswith("Verifying installed packer"):
             label, install = self.dependency_rows["packer"]
             if code == 0:
-                label.setText("✓  Python, translator and SPIR-V tools verified")
-                label.setStyleSheet("color:#91ddb2;")
+                label.set_status("✓  Verified · Python, translator and SPIR-V tools", True)
+                install.setText("Installed")
                 install.setEnabled(False)
             else:
-                label.setText("✕  Packer verification failed. Choose Install to repair it.")
-                label.setStyleSheet("color:#f0bd80;")
+                label.set_status("⚠  Verification failed · Choose Install to repair", False)
+                install.setText("Install")
                 install.setEnabled(True)
         installed = self.install_active
         self.install_active = None
@@ -959,8 +1019,9 @@ class Studio(QMainWindow):
         self.dep_results = {key: (ok, detail, optional) for key, ok, detail, optional in results}
         for key, ok, detail, optional in results:
             label, install = self.dependency_rows[key]
-            label.setText(("✓  " if ok else "✕  ") + detail)
-            label.setStyleSheet("color:" + ("#91ddb2" if ok else "#f0bd80") + ";")
+            label.set_status(("✓  Ready · " if ok else "⚠  Missing · ") + detail, ok)
+            install.setText("Installed" if ok else
+                            ("Get Android Studio" if key == "sdk" else "Install"))
             install.setEnabled(not ok)
             if log:
                 self.write_log(("[OK] " if ok else "[MISSING] ") + key + ": " + detail)
@@ -1072,6 +1133,10 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setStyle("Fusion")
+    # The system dark theme previously left QMessageBox black on brown text.
+    # A light QPalette sets the native popup roles; QSS gives dialog elements
+    # the same contrast as the rest of the cream-and-gold interface.
+    app.setPalette(experience.light_palette())
     app.setStyleSheet(experience.CREAM_STYLE)
     try: win = Studio()
     except (OSError, FileNotFoundError) as e:
