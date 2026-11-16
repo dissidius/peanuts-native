@@ -185,6 +185,7 @@ class Studio(QMainWindow):
         self.settings = QSettings("PeanutsNative", "Studio")
         self.msys_custom = self.settings.value("msys_root", "", type=str)
         self.adb_custom = self.settings.value("adb_exe", "", type=str)
+        self.sdk_custom = self.settings.value("android_sdk_root", "", type=str)
         self.apply_saved_paths()
         self.install_queue = []
         self.install_folder = ""
@@ -561,7 +562,7 @@ class Studio(QMainWindow):
             ("adb", "Android Platform-Tools / ADB", "Install"),
             ("packer", "Python 3.14, .NET 10 and shader packer", "Install"),
             ("java", "JDK 21 (APK build)", "Install"),
-            ("sdk", "Android SDK 36 + NDK 28.2 (APK build)", "Get Android Studio"),
+            ("sdk", "Android SDK 36 + NDK 28.2 (APK build)", "Install SDK"),
         ):
             line_frame = QFrame()
             line_frame.setObjectName("ToolRow")
@@ -585,7 +586,7 @@ class Studio(QMainWindow):
         body.addLayout(row(button("Check tools", lambda: self.check_tools(log=True), True),
                            button("Install missing core tools", self.install_missing),
                            button("Verify packer", self.verify_packer)))
-        body.addWidget(muted("Installations run as visible, cancellable tasks with live logs. Winget may show a Windows elevation dialog. Full preflight compiles and tests the importer only after the required compiler is present."))
+        body.addWidget(muted("Android Studio and the Android SDK are separate installations. Studio can identify and install only the missing SDK packages. Dependency checks never modify files."))
         v.addWidget(c)
 
         c, body = card("Custom installation paths", "Use these fields when tools were installed outside their usual locations.")
@@ -593,10 +594,14 @@ class Studio(QMainWindow):
         self.msys_path.setPlaceholderText("Default: C:\\msys64")
         self.adb_path = QLineEdit(self.adb_custom)
         self.adb_path.setPlaceholderText("Automatically search ADB PATH, WinGet, Android SDK")
+        self.sdk_path = QLineEdit(self.sdk_custom)
+        self.sdk_path.setPlaceholderText("Auto-detect Android SDK folder")
         body.addLayout(row(labelled("MSYS2 root", self.msys_path),
                            button("Browse…", lambda: self.browse_dir(self.msys_path))))
         body.addLayout(row(labelled("adb.exe file", self.adb_path),
                            button("Browse…", lambda: self.pick_one(self.adb_path, "Android Debug Bridge (adb.exe);;Executables (*.exe)"))))
+        body.addLayout(row(labelled("Android SDK location (optional)", self.sdk_path),
+                           button("Browse…", lambda: self.browse_dir(self.sdk_path))))
         body.addLayout(row(button("Save paths and recheck", self.save_tool_paths),
                            button("Run full preflight", self.preflight)))
         v.addWidget(c)
@@ -1001,13 +1006,17 @@ class Studio(QMainWindow):
             os.environ["PEANUTS_MSYS2_UCRT64"] = str(Path(self.msys_custom) / "ucrt64/bin")
         if self.adb_custom:
             os.environ["PEANUTS_ADB"] = self.adb_custom
+        if self.sdk_custom:
+            os.environ["PEANUTS_ANDROID_SDK"] = self.sdk_custom
 
     def save_tool_paths(self):
         self.msys_custom = self.msys_path.text().strip()
         self.adb_custom = self.adb_path.text().strip()
+        self.sdk_custom = self.sdk_path.text().strip()
+        self.settings.setValue("android_sdk_root", self.sdk_custom)
         self.settings.setValue("msys_root", self.msys_custom)
         self.settings.setValue("adb_exe", self.adb_custom)
-        for key in ("PEANUTS_MSYS2_ROOT", "PEANUTS_MSYS2_UCRT64", "PEANUTS_ADB"):
+        for key in ("PEANUTS_MSYS2_ROOT", "PEANUTS_MSYS2_UCRT64", "PEANUTS_ADB", "PEANUTS_ANDROID_SDK"):
             os.environ.pop(key, None)
         self.apply_saved_paths()
         self.check_tools()
@@ -1015,13 +1024,14 @@ class Studio(QMainWindow):
 
     def check_tools(self, log=True):
         """Read-only, finite, synchronous file checks. No setup, prompts or downloads."""
-        results = deps.dependency_status(self.repo, adb=self.adb_custom, root=self.msys_custom)
+        results = deps.dependency_status(self.repo, adb=self.adb_custom, root=self.msys_custom,
+                                         sdk_path=self.sdk_custom)
         self.dep_results = {key: (ok, detail, optional) for key, ok, detail, optional in results}
         for key, ok, detail, optional in results:
             label, install = self.dependency_rows[key]
             label.set_status(("✓  Ready · " if ok else "⚠  ") + detail, ok)
             install.setText("Installed" if ok else
-                            ("Get Android Studio" if key == "sdk" else "Install"))
+                            ("Install SDK" if key == "sdk" else "Install"))
             install.setEnabled(not ok)
             if log:
                 self.write_log(("[OK] " if ok else "[MISSING] ") + key + ": " + detail)
@@ -1053,21 +1063,51 @@ class Studio(QMainWindow):
         self.install_queue = missing
         self._install_next()
 
+    def sdk_license_prompt(self):
+        sdk = deps.sdk_root(self.repo, self.sdk_custom)
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Install Android SDK components")
+        dialog.setIcon(QMessageBox.Icon.Information)
+        dialog.setText("Install Android API 36, NDK 28.2 and Build-Tools 36.0.0?")
+        dialog.setInformativeText(
+            "Destination: " + str(sdk) + "\n\n"
+            "Downloads packages from Google's official repository. If needed, the "
+            "command-line-tools archive will be verified against the official SHA-256.\n\n"
+            "Review the Android SDK license terms before proceeding:\n"
+            "https://developer.android.com/studio/terms")
+        dialog.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
+        dialog.button(QMessageBox.StandardButton.Yes).setText("Install SDK")
+        dialog.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        agree = QCheckBox("I have read and accept the applicable Google Android SDK package licenses.")
+        dialog.setCheckBox(agree)
+        if dialog.exec() != QMessageBox.StandardButton.Yes:
+            return False
+        if not agree.isChecked():
+            self.warn("License approval", "Read the Google Android SDK license and check the approval box first.")
+            return False
+        return True
+
     def install_dependency(self, kind):
         if self.busy:
-            self.warn("Task running", "Stop or finish the current task before starting an installation.")
+            self.warn("Task running", "Finish the active task first. The running game build will not be interrupted.")
             return
-        install_kind = "studio" if kind == "sdk" else kind
-        names = {"msys":"MSYS2", "ucrt":"MSYS2 UCRT64 toolchain", "adb":"Android Platform-Tools (ADB)",
-                 "packer":"Python/.NET shader packer", "java":"Temurin JDK 21", "studio":"Android Studio"}
-        if QMessageBox.question(self, "Install prerequisite", "Install " + names[install_kind] +
-                                " on this PC? This downloads official packages; elevation may be required.") != QMessageBox.StandardButton.Yes:
+        names = {"msys": "MSYS2", "ucrt": "MSYS2 UCRT64 toolchain",
+                 "adb": "Android Platform-Tools (ADB)",
+                 "packer": "Python/.NET shader packer",
+                 "java": "Temurin JDK 21", "sdk": "Android SDK packages"}
+        if kind == "sdk":
+            if not self.sdk_license_prompt():
+                return
+        elif QMessageBox.question(self, "Install prerequisite",
+                "Install " + names[kind] + " on this PC? This downloads official packages; "
+                "Windows may request elevation.") != QMessageBox.StandardButton.Yes:
             return
-        if install_kind == "packer":
+        if kind == "packer":
             folder = QFileDialog.getExistingDirectory(self, "Select folder for packer files", str(Path.home()))
-            if not folder: return
+            if not folder:
+                return
             self.install_folder = folder
-        self.install_queue = [install_kind]
+        self.install_queue = [kind]
         self._install_next()
 
     def _install_next(self):
@@ -1075,7 +1115,8 @@ class Studio(QMainWindow):
             return
         kind = self.install_queue.pop(0)
         try:
-            cmd = deps.install_command(kind, self.repo, root=self.msys_custom, folder=self.install_folder)
+            cmd = deps.install_command(kind, self.repo, root=self.msys_custom,
+                                       folder=self.install_folder, sdk_path=self.sdk_custom)
         except (ValueError, RuntimeError) as exc:
             self.install_queue.clear()
             self.warn("Installation prerequisites", exc)
