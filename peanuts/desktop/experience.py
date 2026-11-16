@@ -299,6 +299,7 @@ def create_overview(studio):
     studio.home_bar = QProgressBar()
     studio.home_bar.setRange(0, 100)
     studio.home_bar.setValue(0)
+    studio.home_bar.setVisible(False)
     bv.addWidget(studio.home_build)
     bv.addWidget(studio.home_build_detail)
     bv.addWidget(studio.home_bar)
@@ -427,10 +428,12 @@ def update_overview(studio, data):
         studio.home_build.setText(f"{job['title']}  •  {job['state']}")
         studio.home_build_detail.setText(f"{job['type']} · {job['step']} · {job['detail']}")
         studio.home_bar.setValue(job["percent"])
+        studio.home_bar.setVisible(True)
     else:
         studio.home_build.setText("No active Android build")
         studio.home_build_detail.setText("Your PC builder can prepare a pack, or start a build on the phone.")
         studio.home_bar.setValue(0)
+        studio.home_bar.setVisible(False)
 
 
 def update_activity(studio, data):
