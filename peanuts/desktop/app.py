@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 import core
 import dependencies as deps
+import experience
 
 APP_NAME = "Peanuts Studio"
 RE_PROGRESS = re.compile(r"^progress:? (\d+)[ /](\d+)")
@@ -159,9 +160,11 @@ class Studio(QMainWindow):
         self.busy = False
         self.pending_id = ""
         self.latest = {}
+        self.game_data = []
+        self.companion_data = []
         self.setWindowTitle(APP_NAME + "  •  Build on Windows, play on Android")
-        self.resize(1180, 850)
-        self.setMinimumSize(960, 690)
+        self.resize(1370, 900)
+        self.setMinimumSize(1060, 730)
         self.setWindowIcon(self.make_icon())
         self.pages = QStackedWidget()
         self.task = QProcess(self)
@@ -199,20 +202,32 @@ class Studio(QMainWindow):
         brand = QLabel("●  PEANUTS\n    STUDIO"); brand.setObjectName("Brand")
         rv.addWidget(brand); rv.addSpacing(24)
         self.navs = []
-        names = [("◈  Overview", self.page_overview), ("▣  Game builder", self.page_builder),
-                 ("▤  Android device", self.page_device), ("⌘  ADB control", self.page_control),
-                 ("◇  APK builder", self.page_apk), ("⚙  Tools & setup", self.page_tools)]
-        for idx, (name, factory) in enumerate(names):
-            nav = QPushButton(name); nav.setObjectName("Nav"); nav.setCheckable(True)
+        names = [
+            ("◈  Dashboard", "overview", self.page_overview),
+            ("▦  Game library", "library", self.page_library),
+            ("▣  PC builder", "builder", self.page_builder),
+            ("◷  Build center", "activity", self.page_activity),
+            ("▤  Android device", "device", self.page_device),
+            ("✧  Companions", "companions", self.page_companions),
+            ("⌘  ADB controls", "control", self.page_control),
+            ("◇  APK builder", "apk", self.page_apk),
+            ("⚙  Tools & setup", "tools", self.page_tools),
+        ]
+        self.nav_map = {key: i for i, (_, key, _) in enumerate(names)}
+        for idx, (name, key, factory) in enumerate(names):
+            nav = QPushButton(name)
+            nav.setObjectName("Nav")
+            nav.setCheckable(True)
             nav.clicked.connect(lambda checked=False, i=idx: self.show_page(i))
-            rv.addWidget(nav); self.navs.append(nav)
+            rv.addWidget(nav)
+            self.navs.append(nav)
             self.pages.addWidget(self.wrap_page(factory()))
         rv.addStretch()
-        rv.addWidget(muted("Android ARM64 runtime\nWindows desktop toolkit\nLocal-first • no telemetry"))
+        rv.addWidget(muted("Build locally · play on Android\nPrivate by design  •  v0.2 preview"))
         outer.addWidget(rail)
         main = QWidget(); ml = QVBoxLayout(main); ml.setContentsMargins(22, 20, 22, 16); ml.setSpacing(12)
         top = QHBoxLayout()
-        t = QLabel("Build locally. Play on Android."); t.setObjectName("PageTitle")
+        t = QLabel("Peanuts Native  /  Studio"); t.setObjectName("PageTitle")
         top.addWidget(t); top.addStretch()
         self.device_combo = QComboBox(); self.device_combo.setMinimumWidth(210)
         self.device_combo.currentIndexChanged.connect(self.refresh_status)
@@ -253,26 +268,51 @@ class Studio(QMainWindow):
         return page, v
 
     def page_overview(self):
-        page, v = self.page("Workspace overview", "One place for imports, native shader conversion, Android builds and ADB.")
-        c, body = card("Workflow", "Native Windows tools prepare the game. Your Android phone runs the resulting ARM64 code.")
-        flow = QHBoxLayout()
-        for s in ("01  Select dumps", "02  Import + shaders", "03  Push via ADB", "04  Launch on phone"):
-            item = QLabel(s); item.setStyleSheet("color:#f6c76d;font-weight:600;padding:10px;")
-            flow.addWidget(item)
-        body.addLayout(flow); v.addWidget(c)
-        c, body = card("Device and library", "The Android app exposes a permission-protected control interface for status and supported actions.")
-        self.overview_status = muted("Select a device to read its live state.")
-        body.addWidget(self.overview_status)
-        line = row(button("Open builder", lambda: self.show_page(1), True),
-                   button("Refresh device", self.refresh_devices),
-                   button("Android control", lambda: self.show_page(3)))
-        body.addLayout(line); v.addWidget(c)
-        c, body = card("Local conversion support")
-        body.addWidget(muted("Standard supported profiles: NSP/XCI → NUP → rewritten ARM64 code + translated Vulkan shaders."))
-        body.addWidget(muted("Oodle/Unreal on Windows x64: Kraken and Mermaid/Selkie worker, Unreal AES index adapter, and strict profile-shader verification for the four validated PC profiles. Other games may still need on-device Prepare."))
-        body.addWidget(muted("The desktop package does not include copyrighted games, console firmware or keys."))
-        v.addWidget(c); v.addStretch()
-        return page
+        return experience.create_overview(self)
+
+    def page_library(self):
+        return experience.create_library(self)
+
+    def page_activity(self):
+        return experience.create_activity(self)
+
+    def page_companions(self):
+        return experience.create_companions(self)
+
+    def render_library(self, *_):
+        experience.render_library(self)
+
+    def render_companions(self, *_):
+        experience.render_companions(self)
+
+    def select_library_game(self, tid):
+        if not core.TITLE.fullmatch(str(tid or "")):
+            self.warn("Game selection", "This entry does not provide a supported title ID.")
+            return
+        self.game_id.setText(tid)
+        self.show_page(self.nav_map["control"])
+        self.write_log("Selected game: " + str(tid))
+
+    def request_device_status(self):
+        if self.device():
+            self.control("status")
+        else:
+            self.write_log("[ADB] No authorized device selected. Connect the phone under Android device.")
+
+    def fetch_companions(self):
+        self.control("companion", {"do": "list"})
+
+    def companion_action(self, tid, operation):
+        if not core.TITLE.fullmatch(str(tid or "")):
+            self.warn("Companion", "Select a valid catalog entry.")
+            return
+        fields = {"do": operation, "title_id": tid}
+        if operation == "remove":
+            if QMessageBox.question(self, "Remove companion",
+                "Remove this game's companion? Game data and saves should remain untouched.") != QMessageBox.StandardButton.Yes:
+                return
+            fields["confirm"] = "true"
+        self.control("companion", fields)
 
     def page_builder(self):
         page, v = self.page("Game builder", "Import your own NSP/XCI files, apply updates and DLC, build code + Vulkan shaders, optionally transfer to Android.")
@@ -626,7 +666,8 @@ class Studio(QMainWindow):
             elif len(serials) == 1: self.device_combo.setCurrentIndex(1)
             self.device_combo.blockSignals(False)
             self.device_info.setText("Authorized ADB devices: " + (", ".join(serials) if serials else "none"))
-            self.refresh_status()
+            if self.device():
+                self.request_device_status()
         except (OSError, subprocess.SubprocessError, RuntimeError) as e:
             self.device_info.setText("ADB unavailable: " + str(e))
             self.write_log("[ADB] " + str(e))
@@ -643,6 +684,9 @@ class Studio(QMainWindow):
         try: data = json.loads(raw)
         except (ValueError, TypeError): return
         self.latest = data
+        experience.update_overview(self, data)
+        experience.update_library(self, data)
+        experience.update_activity(self, data)
         app = data.get("app") or {}
         self.overview_status.setText(
             "Android: " + str(app.get("version", "?")) +
@@ -663,7 +707,10 @@ class Studio(QMainWindow):
                            " — " + str(result.get("message") or result.get("error") or result.get("cmd") or ""))
             extra = result.get("data")
             if extra and result.get("cmd") == "companion":
-                self.write_log(json.dumps(extra, ensure_ascii=False, indent=2)[:1800])
+                if isinstance(extra, dict) and isinstance(extra.get("companions"), list):
+                    experience.update_companions(self, extra["companions"])
+                else:
+                    self.write_log(json.dumps(extra, ensure_ascii=False, indent=2)[:1800])
 
     def display_library(self, library):
         chosen = self.game_id.text().strip()
@@ -907,7 +954,7 @@ class Studio(QMainWindow):
         if missing:
             self.write_log("[MISSING] Preflight cannot run: " + ", ".join(missing) +
                            ". Install the missing dependencies above first.")
-            self.show_page(5)
+            self.show_page(self.nav_map["tools"])
             return
         self.run_task(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
                        "-File", str(self.repo / "peanuts/scripts/windows-builder-check.ps1")],
@@ -936,7 +983,7 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setStyle("Fusion")
-    app.setStyleSheet(DARK_STYLE)
+    app.setStyleSheet(experience.CREAM_STYLE)
     try: win = Studio()
     except (OSError, FileNotFoundError) as e:
         QMessageBox.critical(None, "Peanuts Studio", str(e))
