@@ -43,7 +43,9 @@ jobs:
       - name: Capture first-run desktop screenshot
         shell: pwsh
         env:
-          QT_QPA_PLATFORM: offscreen
+          # Native Windows Qt backend supplies real font rendering for the preview.
+          # Qt's offscreen Windows plugin produced tofu glyphs despite passing smoke tests.
+          QT_QPA_PLATFORM: windows
           PEANUTS_REPO: ${{ github.workspace }}
         run: |
           python peanuts/desktop/app.py --preview PeanutsStudio-preview.png
