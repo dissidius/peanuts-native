@@ -49,6 +49,14 @@ jobs:
         shell: pwsh
         run: |
           ./peanuts/scripts/windows-builder-check.ps1 -SkipPackerEnvironment
+      - name: Run Windows Oodle decoder regression suite
+        env:
+          PEANUTS_MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+          PEANUTS_MSYS2_UCRT64: ${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin
+        shell: pwsh
+        run: |
+          & python ./peanuts/tests/test_unoodle.py
+          if ($LASTEXITCODE -ne 0) { throw 'Windows Oodle regression tests failed' }
       - name: Install and verify the actual Windows shader packer environment
         shell: pwsh
         run: |
@@ -56,6 +64,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Windows packer environment setup failed' }
           & ./scripts/bananative.bat check
           if ($LASTEXITCODE -ne 0) { throw 'Windows packer dependency check failed' }
+          & ./scripts/bananative.bat python -c "from Crypto.Cipher import AES; print('Windows Unreal AES ready')"
+          if ($LASTEXITCODE -ne 0) { throw 'Windows Unreal AES dependency missing' }
           & ./scripts/bananative.bat python ./peanuts/scripts/peanuts_build.py --help
           if ($LASTEXITCODE -ne 0) { throw 'Windows game builder CLI failed' }
       - name: Probe Windows batch builder
