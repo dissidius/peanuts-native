@@ -221,6 +221,7 @@ class Studio(QMainWindow):
         cv.addWidget(self.progress)
         self.console = QTextEdit(); self.console.setReadOnly(True); self.console.setFixedHeight(142)
         self.console.setFont(QFont("Consolas", 10))
+        self.console.document().setMaximumBlockCount(5000)
         cv.addWidget(self.console)
         ml.addWidget(console)
         outer.addWidget(main, 1)
@@ -716,6 +717,8 @@ def main():
         QMessageBox.critical(None, "Peanuts Studio", str(e))
         return 2
     win.show()
+    if '--smoke' in sys.argv:
+        QTimer.singleShot(800, app.quit)
     return app.exec()
 
 
