@@ -49,6 +49,21 @@ class Planner(unittest.TestCase):
         with self.assertRaises(ValueError):
             core.control_command("abc", "status", {"bad;key":"a"})
 
+    @unittest.skipUnless(sys.platform == "win32", "Windows batch and PowerShell only")
+    def test_packer_check_missing_ends_without_prompt(self):
+        """Check tools must exit instead of blocking on Read-Host on a fresh checkout."""
+        import subprocess
+        repo = Path(__file__).resolve().parents[2]
+        if (repo / ".bananative-env").is_file() or os.environ.get("BANANATIVE_ENV"):
+            self.skipTest("Developer already configured a packer environment")
+        check = repo / "scripts/bananative.bat"
+        result = subprocess.run(
+            ["cmd.exe", "/d", "/c", str(check), "check"], input="",
+            capture_output=True, text=True, errors="replace", timeout=18)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("[MISSING]", result.stdout + result.stderr)
+        self.assertNotIn("Folder [", result.stdout + result.stderr)
+
     def test_gradle_stage_guard(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(ValueError, "stage"):
