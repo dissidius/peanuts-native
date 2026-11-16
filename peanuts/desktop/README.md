@@ -47,9 +47,11 @@ and make `adb devices` show one authorized device before transfers.
   companion or stopping a game asks for confirmation.
 - **APK builder:** invokes the existing Gradle + Android NDK build for an
   installable **test** APK when the **real Android ARM64 packer stage already
-  exists**. Generating the stage itself is currently a Linux/macOS or properly
-  configured WSL build, **not a native Windows implementation**. No simulated
-  or fake packer stage is offered as an equivalent.
+  exists**. The **Generate stage via WSL2** button runs the repository's
+  Linux stage builder in a configured WSL2 distribution; it requires the Linux
+  .NET 10 SDK, zsh, Android NDK and `ANDROID_NDK_HOME` inside WSL, and a
+  Windows work folder. There is no native Windows stage builder yet. No
+  simulated or fake packer stage is offered as an equivalent.
 - **Tools & setup:** checks/installs local tool dependencies and opens outputs.
 
 The GUI neither stores the console keys contents nor commits or uploads game
