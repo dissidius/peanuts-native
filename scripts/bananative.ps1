@@ -81,6 +81,30 @@ $cmd = if ($args.Count -gt 0) { $args[0] } else { 'gui' }
 if ($args.Count -gt 1) { $rest = @($args[1..($args.Count - 1)]) }   # typing avoids PowerShell's one-element pipeline unwrapping
 if ($cmd -eq 'setup') { Invoke-Setup ($(if ($args.Count -gt 1) { [string]$args[1] } else { '' })) | Out-Null; exit 0 }
 
+# 'check' is a pure diagnostic. Never download packages, scan conda environments
+# indefinitely, or invoke Read-Host when a GUI launches it without stdin.
+# It returns 2 when no environment is installed and 1 when a known one is broken.
+if ($cmd -eq 'check') {
+    $envDir = $env:BANANATIVE_ENV
+    if (-not $envDir) { $envDir = Remembered }
+    if (-not $envDir) {
+        Say '[MISSING] The Windows packer environment is not installed.'
+        Say 'In Peanuts Studio choose Tools & setup -> Install packer environment (choose an existing folder).'
+        exit 2
+    }
+    $py = Join-Path $envDir 'python.exe'
+    if (-not (Test-Path -PathType Leaf $py)) {
+        Say "[MISSING] Packer Python was not found at $py"
+        Say 'Use Install packer environment to repair it.'
+        exit 2
+    }
+    $env:PATH = (@($envDir, (Join-Path $envDir 'Library\bin'), (Join-Path $envDir 'Scripts')) -join ';') + ';' + $env:PATH
+    $dn = Join-Path $envDir 'dotnet'
+    if (Test-Path $dn) { $env:DOTNET_ROOT = $dn }
+    & $py $Check
+    exit $LASTEXITCODE
+}
+
 $envDir = Find-Env
 if ($envDir) {
     if ((Remembered) -ne $envDir) { Set-Content -Path $Conf -Value $envDir -Encoding ascii }
