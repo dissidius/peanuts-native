@@ -189,7 +189,7 @@ def readiness(data):
 
 
 class GameTile(QFrame):
-    def __init__(self, entry, select):
+    def __init__(self, entry, select, percent=None):
         super().__init__()
         self.setObjectName("Tile")
         self.setMinimumHeight(164)
@@ -220,6 +220,13 @@ class GameTile(QFrame):
         title.setMinimumHeight(32)
         v.addWidget(title)
         v.addWidget(subtitle(tid))
+        if state == "building" and percent is not None:
+            bar = QProgressBar()
+            bar.setRange(0, 100)
+            bar.setValue(max(0, min(100, int(percent))))
+            bar.setFormat(f"Preparing  ·  {int(percent)}%")
+            bar.setTextVisible(True)
+            v.addWidget(bar)
         v.addStretch()
         footer = button("Manage game  ›", lambda: select(tid))
         v.addWidget(footer)
@@ -432,7 +439,16 @@ def update_activity(studio, data):
 
 
 def update_library(studio, data):
-    studio.game_data = library_rows(data)
+    entries = library_rows(data)
+    job = normalize_job(data)
+    job_key = (str((data.get("job") or {}).get("title_id") or (data.get("build") or {}).get("title_id") or ""),
+               job["percent"] if job else None)
+    signature = (tuple((str(x.get("title_id")), str(x.get("name")), str(x.get("state")),
+                        str(x.get("pack"))) for x in entries), job_key)
+    if signature == getattr(studio, "_library_signature", None):
+        return  # avoid rebuilding dozens of game cards on every 3.5-second status poll
+    studio._library_signature = signature
+    studio.game_data = entries
     total, ready, building, _, _ = readiness(data)
     studio.library_summary.setText(f"{total} games   •   {ready} ready   •   {building} building")
     render_library(studio)
@@ -448,8 +464,12 @@ def render_library(studio):
                and (not query or query in str(g.get("name", "")).casefold()
                     or query in str(g.get("title_id", "")).casefold())]
     studio.library_empty.setVisible(not entries)
+    active = normalize_job(studio.latest)
+    tid = str(((studio.latest.get("job") or {}).get("title_id")
+               or (studio.latest.get("build") or {}).get("title_id") or "")).upper()
     for n, entry in enumerate(entries):
-        tile = GameTile(entry, studio.select_library_game)
+        percent = active["percent"] if (active and tid and tid == str(entry.get("title_id") or "").upper()) else None
+        tile = GameTile(entry, studio.select_library_game, percent=percent)
         studio.game_grid.addWidget(tile, n // 3, n % 3)
     for col in range(3):
         studio.game_grid.setColumnStretch(col, 1)
