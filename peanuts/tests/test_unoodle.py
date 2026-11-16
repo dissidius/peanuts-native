@@ -32,10 +32,14 @@ class Unoodle(unittest.TestCase):
         if sys.platform != 'win32' and (not cxx() or not shutil.which('patch') or not shutil.which('sh')):
             raise unittest.SkipTest('no C++ compiler or no patch program')
         cls.dir = tempfile.TemporaryDirectory()
-        cls.exe = os.path.join(cls.dir.name, 'unoodle.exe' if sys.platform == 'win32' else 'unoodle')
         if sys.platform == 'win32':
+            # The Windows decoder is deliberately built in peanuts/.build/ooz:
+            # MSYS2 GCC on the hosted runner cannot always emit a static EXE
+            # into the cross-volume runner TEMP dir. Exercise the real target.
+            cls.exe = str(REPO / 'peanuts/.build/ooz/unoodle.exe')
             r = subprocess.run([sys.executable, str(REPO / 'peanuts/scripts/build_unoodle_windows.py'), cls.exe], capture_output=True, text=True)
         else:
+            cls.exe = os.path.join(cls.dir.name, 'unoodle')
             r = subprocess.run(['sh', str(OOZ / 'build.sh'), cls.exe, cxx()], capture_output=True, text=True)
         if r.returncode: cls.dir.cleanup(); raise AssertionError(f'unoodle build failed ({r.returncode}): {r.stdout}{r.stderr}')
 
