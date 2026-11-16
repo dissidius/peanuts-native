@@ -110,6 +110,51 @@ class Dependencies(unittest.TestCase):
             self.assertIn("setup", cmd)
 
 
+class SDKInstaller(unittest.TestCase):
+    def test_detect_sdk_and_missing_components(self):
+        import dependencies as deps
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "Android SDK"
+            root.mkdir()
+            self.assertEqual(len(deps.sdk_missing(root)), 3)
+            for file in ("platforms/android-36/android.jar",
+                         "ndk/28.2.13676358/source.properties",
+                         "build-tools/36.0.0/aapt2.exe"):
+                target = root / file
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"fake test fixture")
+            self.assertEqual(deps.sdk_missing(root), [])
+            results = deps.dependency_status(Path(tmp), sdk_path=str(root))
+            self.assertTrue(dict((key, ok) for key, ok, *_ in results)["sdk"])
+
+    def test_sdk_install_requires_explicit_python_and_license_consent(self):
+        import dependencies as deps
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = root / "localpython"
+            env.mkdir()
+            python = env / "python.exe"
+            python.write_bytes(b"fixture")
+            (root / ".bananative-env").write_text(str(env), encoding="utf-8")
+            cmd = deps.install_command("sdk", root, sdk_path=str(root / "AndroidSdk"))
+            self.assertEqual(cmd[0], str(python))
+            self.assertIn("--license-consent", cmd)
+            self.assertIn("--sdk-root", cmd)
+            self.assertEqual(cmd[cmd.index("--sdk-root") + 1], str(root / "AndroidSdk"))
+
+    def test_shader_progress_milestones(self):
+        import progress
+        self.assertIsNone(progress.parse("other output"))
+        self.assertIsNone(progress.parse("progress 100 0 translate"))
+        p = progress.parse("progress 54080 73496 translate")
+        self.assertEqual(p.percent, 74)
+        self.assertIn("54,080/73,496", p.text)
+        milestone = progress.Milestones(step=5)
+        self.assertTrue(milestone.should_log(p))
+        self.assertFalse(milestone.should_log(progress.parse("progress 54120 73496 translate")))
+        self.assertTrue(milestone.should_log(progress.parse("progress 55200 73496 translate")))
+
+
 class Desktop(unittest.TestCase):
     def test_qt_widgets_headless(self):
         if os.environ.get("PEANUTS_STUDIO_SKIP_QT"):
@@ -180,6 +225,12 @@ class Desktop(unittest.TestCase):
         self.assertIn("…", detail.text())
         self.assertLessEqual(detail.fontMetrics().horizontalAdvance(detail.text()), 230)
         self.assertTrue(win.console.isHidden())
+        # A long shader run must remain collapsed by default, but still
+        # maintain its true progress percentage and save the raw diagnostics.
+        win._process_task_line("progress 54080 73496 translate")
+        self.assertEqual(win.progress.value(), 74)
+        self.assertIn("54,080/73,496", win.task_label.text())
+        self.assertEqual(len(win._task_raw_log), 1)
         win.close()
         qapp.processEvents()
 
