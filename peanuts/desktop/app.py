@@ -423,7 +423,7 @@ class Studio(QMainWindow):
             line.addWidget(install)
             self.dependency_rows[key] = (detail, install)
             body.addLayout(line)
-        body.addLayout(row(button("Check tools", self.check_tools, True),
+        body.addLayout(row(button("Check tools", lambda: self.check_tools(log=True), True),
                            button("Install missing core tools", self.install_missing),
                            button("Verify packer", self.verify_packer)))
         body.addWidget(muted("Installations run as visible, cancellable tasks with live logs. Winget may show a Windows elevation dialog. Full preflight compiles and tests the importer only after the required compiler is present."))
