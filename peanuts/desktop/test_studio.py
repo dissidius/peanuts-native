@@ -122,7 +122,39 @@ class Desktop(unittest.TestCase):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         qapp = QApplication.instance() or QApplication([])
         win = ui.Studio()
-        self.assertEqual(win.pages.count(), 6)
+        self.assertEqual(win.pages.count(), 9)
+        self.assertIsNotNone(win.game_grid)
+        self.assertIsNotNone(win.activity_bar)
+        self.assertIsNotNone(win.companion_grid)
+        self.assertEqual(win.nav_map["tools"], 8)
+        sample = {
+            "app": {"version": "0.1.3", "keys": True, "firmware": True,
+                    "folders": {"game": {"path": "/sdcard/Peanut Roms"}}, "gpu_driver": "system"},
+            "library": [
+                {"title_id": "0100606026F12000", "name": "FINAL FANTASY RESONANCE",
+                 "state": "building", "game": "game.nup", "pack": None},
+                {"title_id": "01006BB00C6F0000", "name": "Link's Awakening",
+                 "state": "ready", "pack": "game-pack"},
+            ],
+            "job": {"title_id": "0100606026F12000", "name": "FINAL FANTASY RESONANCE",
+                    "state": "running", "step": "rewrite", "percent": 47,
+                    "text": "Rewriting main 1 of 3", "counts":
+                     {"shaders": {"done": 39800, "total": 81552}}, "eta": "38 min"},
+        }
+        import experience
+        experience.update_overview(win, sample)
+        experience.update_library(win, sample)
+        experience.update_activity(win, sample)
+        self.assertEqual(win.stat_total.text(), "2")
+        self.assertEqual(win.stat_ready.text(), "1")
+        self.assertEqual(win.activity_bar.value(), 47)
+        self.assertEqual(win.game_grid.count(), 2)
+        win.library_find.setText("resonance")
+        self.assertEqual(win.game_grid.count(), 1)
+        experience.update_companions(win, [{"title_id": "01006BB00C6F0000",
+            "name": "Link's Awakening", "state": "not_installed",
+            "catalog": "1.0.0", "built": True}])
+        self.assertEqual(win.companion_grid.count(), 1)
         self.assertTrue(win.sources is not None)
         self.assertTrue(win.library is not None)
         win.close()
