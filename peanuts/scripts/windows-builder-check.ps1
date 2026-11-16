@@ -3,9 +3,11 @@
 param([switch]$SkipPackerEnvironment)
 $ErrorActionPreference = 'Stop'
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$Ucrt = Join-Path $env:SystemDrive 'msys64\ucrt64\bin'
+$Ucrt = if ($env:PEANUTS_MSYS2_UCRT64) { $env:PEANUTS_MSYS2_UCRT64 } else { Join-Path $env:SystemDrive 'msys64\ucrt64\bin' }
 if (Test-Path (Join-Path $Ucrt 'gcc.exe')) {
     $env:PATH = "$Ucrt;$env:PATH"
+} else {
+    Write-Warning "MSYS2 UCRT64 compiler missing at $Ucrt. Install MSYS2 UCRT64, or set PEANUTS_MSYS2_UCRT64 to its bin directory."
 }
 function Need([string]$name, [string]$hint) {
     if (-not (Get-Command $name -ErrorAction SilentlyContinue)) { throw "$name not found. $hint" }
