@@ -38,7 +38,8 @@ class Planner(unittest.TestCase):
 
     def test_adb_argv(self):
         cmd = core.control_command("serial-A", "prepare", {"title_id":"01006BB00C6F0000"}, "abc123")
-        self.assertEqual(cmd[:4], ["adb", "-s", "serial-A", "shell"])
+        self.assertIn(Path(cmd[0]).name.lower(), ("adb", "adb.exe"))
+        self.assertEqual(cmd[1:4], ["-s", "serial-A", "shell"])
         self.assertIn("dev.nxnative.android.peanuts/dev.peanuts.ctl.Command", cmd)
         self.assertIn("abc123", cmd)
         with self.assertRaises(ValueError):
@@ -66,6 +67,32 @@ class Planner(unittest.TestCase):
             self.assertEqual(cmd[-1], "apk")
             with self.assertRaises(ValueError):
                 core.gradle_command(repo, stage, "oops")
+
+
+class Dependencies(unittest.TestCase):
+    def test_check_only_reports_without_running_installer(self):
+        import dependencies as deps
+        with tempfile.TemporaryDirectory() as tmp:
+            found = deps.dependency_status(Path(tmp))
+            self.assertEqual([x[0] for x in found], ["msys", "ucrt", "adb", "packer", "java", "sdk"])
+            self.assertFalse(found[3][1])
+            self.assertIn("not installed", found[3][2].lower())
+
+    def test_adb_browse_override(self):
+        import dependencies as deps
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp) / "adb.exe"
+            exe.write_bytes(b"synthetic")
+            self.assertEqual(deps.adb_executable(str(exe)), str(exe.resolve()))
+
+    def test_packer_install_requires_an_existing_folder(self):
+        import dependencies as deps
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(RuntimeError):
+                deps.install_command("packer", Path(tmp), folder=str(Path(tmp) / "missing"))
+            cmd = deps.install_command("packer", Path(tmp), folder=tmp)
+            self.assertIn("-NonInteractive", cmd)
+            self.assertIn("setup", cmd)
 
 
 class Desktop(unittest.TestCase):
