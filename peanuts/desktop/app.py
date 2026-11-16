@@ -275,8 +275,14 @@ class Studio(QMainWindow):
         self.show_page(0)
 
     def wrap_page(self, page):
-        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setWidget(page); return scroll
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        page.setObjectName("PageSurface")
+        page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        scroll.viewport().setStyleSheet("background:#fbf6e9;")
+        scroll.setWidget(page)
+        return scroll
 
     def toggle_logs(self):
         expanded = not self.console.isVisible()
