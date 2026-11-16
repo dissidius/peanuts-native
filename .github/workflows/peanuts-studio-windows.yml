@@ -49,12 +49,21 @@ jobs:
           PEANUTS_REPO: ${{ github.workspace }}
         run: |
           python peanuts/desktop/app.py --preview PeanutsStudio-preview.png
-          if ($LASTEXITCODE -ne 0) { throw 'Studio screenshot capture failed' }
-          if (!(Test-Path PeanutsStudio-preview.png)) { throw 'Studio screenshot not created' }
+          if ($LASTEXITCODE -ne 0) { throw 'Studio dashboard capture failed' }
+          python peanuts/desktop/app.py --preview-tools PeanutsStudio-tools.png
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency manager capture failed' }
+          python peanuts/desktop/app.py --preview-dialog PeanutsStudio-dialog.png
+          if ($LASTEXITCODE -ne 0) { throw 'Confirmation dialog capture failed' }
+          foreach ($name in @("PeanutsStudio-preview.png", "PeanutsStudio-tools.png", "PeanutsStudio-dialog.png")) {
+            if (!(Test-Path $name)) { throw "Required screenshot missing: $name" }
+          }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: PeanutsStudio-UI-Preview
-          path: PeanutsStudio-preview.png
+          path: |
+            PeanutsStudio-preview.png
+            PeanutsStudio-tools.png
+            PeanutsStudio-dialog.png
           if-no-files-found: error
           retention-days: 14
       - name: Package Windows executable
