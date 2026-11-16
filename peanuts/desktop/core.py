@@ -55,6 +55,12 @@ def builder_environment(repo):
             if (dn / "dotnet.exe").is_file() and not env.get("DOTNET_ROOT"):
                 env["DOTNET_ROOT"] = str(dn)
                 break
+    sdk_override = env.get("PEANUTS_ANDROID_SDK", "")
+    if sdk_override:
+        sdk = Path(sdk_override)
+        env["ANDROID_HOME"] = str(sdk)
+        env["ANDROID_SDK_ROOT"] = str(sdk)
+        candidates.append(sdk / "platform-tools")
     env["PATH"] = os.pathsep.join([str(p) for p in candidates if p.is_dir()] + [env.get("PATH", "")])
     return env
 
