@@ -357,8 +357,16 @@ class Studio(QMainWindow):
         self.device_info = QLabel("No device selected"); self.device_info.setObjectName("Status")
         body.addWidget(self.device_info)
         body.addLayout(row(button("Refresh ADB", self.refresh_devices, True),
-                           button("Check device state", self.refresh_status),
+                           button("Sync device state", self.request_device_status),
                            button("Open Peanuts app", lambda: self.control("nav", {"to":"home"}))))
+        v.addWidget(c)
+        c, body = card("Device readiness", "Status comes from the app itself. Keys, firmware and library paths stay on the device.")
+        self.device_readiness = muted("Connect an authorized device to check keys, firmware and GPU.")
+        self.device_folders = muted("Game, update, DLC and build folders will appear after synchronization.")
+        body.addWidget(self.device_readiness)
+        body.addWidget(self.device_folders)
+        body.addLayout(row(button("Open library configuration on phone", lambda: self.android_section("Library")),
+                           button("Game defaults", lambda: self.android_section("Game defaults"))))
         v.addWidget(c)
         c, body = card("Transfer a prepared pack", "Choose the android-pack directory containing pack.tsv and its matching NUP/dump.")
         self.pack_path = QLineEdit(); self.pack_path.setPlaceholderText("…/<TITLEID>-work/android-pack")
@@ -699,6 +707,18 @@ class Studio(QMainWindow):
         experience.update_library(self, data)
         experience.update_activity(self, data)
         app = data.get("app") or {}
+        self.device_readiness.setText(
+            "Peanuts Native " + str(app.get("version") or "?") +
+            "   •   Keys " + ("configured" if app.get("keys") else "missing") +
+            "   •   Firmware " + ("configured" if app.get("firmware") else "missing") +
+            "   •   GPU " + str(app.get("gpu_driver") or "system"))
+        paths = []
+        for label, key in (("Games", "game"), ("Updates", "update"), ("DLC", "dlc"), ("Build", "build")):
+            folder = (app.get("folders") or {}).get(key) or {}
+            path = folder.get("path") if isinstance(folder, dict) else ""
+            free = experience.human_bytes(folder.get("free")) if isinstance(folder, dict) else "—"
+            paths.append(f"{label}: {path or 'not selected'}  •  free: {free}")
+        self.device_folders.setText("\n".join(paths))
         self.overview_status.setText(
             "Android: " + str(app.get("version", "?")) +
             "    •    Keys: " + str(app.get("keys", "?")) +
