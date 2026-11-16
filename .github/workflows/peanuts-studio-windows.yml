@@ -52,7 +52,9 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           PEANUTS_REPO: ${{ github.workspace }}
         run: |
-          & ./dist/PeanutsStudio.exe --smoke
+          # A --windowed .exe does not reliably update PowerShell's LASTEXITCODE.
+          # Python subprocess waits for the GUI process and propagates its true exit code.
+          python -c "import subprocess,sys; p=subprocess.run(['dist/PeanutsStudio.exe','--smoke'],timeout=45); sys.exit(p.returncode)"
           if ($LASTEXITCODE -ne 0) { throw "Packaged Studio failed to start: $LASTEXITCODE" }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
