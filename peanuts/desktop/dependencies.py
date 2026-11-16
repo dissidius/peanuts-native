@@ -20,7 +20,7 @@ MSYS_PACKAGES = (
 
 def msys_root(custom=""):
     roots = [custom, os.environ.get("PEANUTS_MSYS2_ROOT", ""),
-             str(Path(os.environ.get("SystemDrive", "C:")) / "msys64"),
+             str(Path(os.environ.get("SystemDrive", "C:") + "/") / "msys64"),
              str(Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/MSYS2")]
     for candidate in roots:
         if candidate and (Path(candidate) / "usr/bin/bash.exe").is_file():
