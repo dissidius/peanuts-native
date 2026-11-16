@@ -280,7 +280,9 @@ class Studio(QMainWindow):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         page.setObjectName("PageSurface")
         page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        scroll.viewport().setStyleSheet("background:#fbf6e9;")
+        # Don't style the viewport with an unqualified stylesheet: Qt cascades
+        # that rule to child cards/buttons, washing out gold accents.
+        scroll.viewport().setObjectName("PeanutsScrollViewport")
         scroll.setWidget(page)
         return scroll
 
