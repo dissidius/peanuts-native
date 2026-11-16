@@ -121,6 +121,10 @@ class Desktop(unittest.TestCase):
             self.skipTest(str(exc))
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         qapp = QApplication.instance() or QApplication([])
+        import experience
+        qapp.setStyle("Fusion")
+        qapp.setPalette(experience.light_palette())
+        qapp.setStyleSheet(experience.CREAM_STYLE)
         win = ui.Studio()
         self.assertEqual(win.pages.count(), 9)
         self.assertIsNotNone(win.game_grid)
@@ -157,6 +161,25 @@ class Desktop(unittest.TestCase):
         self.assertEqual(win.companion_grid.count(), 1)
         self.assertTrue(win.sources is not None)
         self.assertTrue(win.library is not None)
+        from PySide6.QtGui import QPalette
+        from PySide6.QtWidgets import QMessageBox
+        self.assertEqual(qapp.palette().color(QPalette.ColorRole.WindowText).name(), "#38291c")
+        dialog = QMessageBox(win)
+        dialog.setWindowTitle("Install prerequisite")
+        dialog.setText("Install Python/.NET shader packer on this PC?")
+        dialog.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        self.assertEqual(dialog.palette().color(QPalette.ColorRole.WindowText).name(), "#38291c")
+        dialog.close()
+        # A real 180-character Windows path must not expand the layout or
+        # collide with the Install button. Full data remains in the tooltip.
+        detail, install = win.dependency_rows["adb"]
+        very_long = "C:\\Users\\User\\AppData\\Local\\" + ("MicrosoftWinGetPackages\\" * 9) + "adb.exe"
+        detail.resize(230, 30)
+        detail.set_status("✓  Ready · " + very_long, True)
+        self.assertEqual(detail.toolTip(), "✓  Ready · " + very_long)
+        self.assertIn("…", detail.text())
+        self.assertLessEqual(detail.fontMetrics().horizontalAdvance(detail.text()), 230)
+        self.assertTrue(win.console.isHidden())
         win.close()
         qapp.processEvents()
 
