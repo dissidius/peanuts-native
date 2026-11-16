@@ -317,6 +317,10 @@ class Studio(QMainWindow):
             self.write_log("[ADB] No authorized device selected. Connect the phone under Android device.")
 
     def fetch_companions(self):
+        if not self.device():
+            self.warn("Companions", "Connect an authorized Android device first.")
+            return
+        self.companion_summary.setText("Fetching the companion catalog from the phone…")
         self.control("companion", {"do": "list", "all": "true"})
 
     def companion_action(self, tid, operation):
@@ -754,11 +758,15 @@ class Studio(QMainWindow):
             self.write_log("[Android control] " + ("OK" if result.get("ok") else "Failed") +
                            " — " + str(result.get("message") or result.get("error") or result.get("cmd") or ""))
             extra = result.get("data")
-            if extra and result.get("cmd") == "companion":
+            if result.get("cmd") == "companion":
                 if isinstance(extra, dict) and isinstance(extra.get("companions"), list):
                     experience.update_companions(self, extra["companions"])
+                elif result.get("ok"):
+                    self.write_log(json.dumps(extra or {}, ensure_ascii=False, indent=2)[:1800])
+                    QTimer.singleShot(400, self.fetch_companions)
                 else:
-                    self.write_log(json.dumps(extra, ensure_ascii=False, indent=2)[:1800])
+                    self.companion_summary.setText("Catalog request failed: " +
+                        str(result.get("message") or result.get("error") or "unknown error"))
 
     def display_library(self, library):
         chosen = self.game_id.text().strip()
