@@ -106,19 +106,37 @@ def java_environment():
 
 def run_sdkmanager(manager, root, env, *args, accept=False):
     command = [str(manager), "--sdk_root=" + str(root), *args]
-    # Accepting packages is never implicit: the Studio UI displayed the license
-    # agreement and required the user to tick a dedicated consent checkbox.
-    result = subprocess.run(command,
-                            input=("y\n" * 128 if accept else None),
-                            text=True, encoding="utf-8", errors="replace",
-                            env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    if result.stdout:
-        for line in result.stdout.splitlines():
-            say(line)
-    if result.returncode:
-        raise RuntimeError("Android SDK Manager failed (exit " + str(result.returncode) + ").")
-    return result.returncode
+    # Only the explicit GUI's SDK-license consent authorizes answering Google's
+    # SDK Manager license prompts, and only for this specific installation.
+    proc = subprocess.Popen(
+        command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+        bufsize=1, env=env,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    if proc.stdin:
+        try:
+            if accept:
+                proc.stdin.write("y\n" * 128)
+                proc.stdin.flush()
+        except BrokenPipeError:
+            pass
+        finally:
+            try:
+                proc.stdin.close()
+            except OSError:
+                pass
+    if proc.stdout:
+        # SDK Manager uses both CR progress updates and normal LF output.
+        # TextIOWrapper's universal-newline handling yields either as a line.
+        for line in proc.stdout:
+            if line.strip():
+                say(line.rstrip())
+        proc.stdout.close()
+    exit_code = proc.wait()
+    if exit_code:
+        raise RuntimeError("Android SDK Manager failed (exit " + str(exit_code) + ").")
+    return exit_code
+
 
 def main():
     cli = argparse.ArgumentParser()
