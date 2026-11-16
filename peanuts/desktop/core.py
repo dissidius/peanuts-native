@@ -8,6 +8,8 @@ import re
 import sys
 from pathlib import Path
 
+import dependencies as deps
+
 PACKAGE = "dev.nxnative.android.peanuts"
 CONTROL = PACKAGE + "/dev.peanuts.ctl.Command"
 STATUS = "/sdcard/Android/data/" + PACKAGE + "/files/ctl/status.json"
@@ -42,7 +44,7 @@ def builder_environment(repo):
     env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
     candidates = []
     if os.name == "nt":
-        root = Path(env.get("PEANUTS_MSYS2_ROOT", "C:/msys64"))
+        root = deps.msys_root()
         candidates += [root / "ucrt64/bin", root / "usr/bin"]
     config = repo / ".bananative-env"
     prefix = env.get("BANANATIVE_ENV") or (config.read_text(encoding="utf-8").strip() if config.is_file() else "")
@@ -89,7 +91,7 @@ def game_command(repo, python, inputs, *, keys="", update="", out="", threads=8,
 def adb_command(serial, args):
     if not serial or re.search(r"\s", serial):
         raise ValueError("Select an authorized ADB device.")
-    return ["adb", "-s", serial, *args]
+    return [deps.adb_executable() or "adb", "-s", serial, *args]
 
 
 def control_command(serial, command, fields=None, request_id=None):
