@@ -154,6 +154,7 @@ class Studio(QMainWindow):
         self.install_queue = []
         self.install_folder = ""
         self.install_active = None
+        self.task_serial = 0
         self.busy = False
         self.pending_id = ""
         self.latest = {}
@@ -477,11 +478,13 @@ class Studio(QMainWindow):
         QMessageBox.warning(self, title, str(message))
         self.write_log("[WARN] " + str(message))
 
-    def run_task(self, cmd, label="Working"):
+    def run_task(self, cmd, label="Working", timeout_ms=0):
         if self.busy:
             self.warn("Task running", "Stop or finish the current task first.")
             return False
         self.busy = True; self.stop_btn.setEnabled(True)
+        self.task_serial += 1
+        serial = self.task_serial
         self.task_label.setText(label); self.progress.setRange(0, 0)
         self.write_log("▶  " + label)
         # Deliberately do not print command argv: it may contain the private path to keys.
@@ -497,7 +500,20 @@ class Studio(QMainWindow):
         if not self.task.waitForStarted(1600):
             self.task_failed("Cannot start process: " + self.task.errorString())
             return False
+        if timeout_ms:
+            QTimer.singleShot(timeout_ms, lambda: self.timeout_task(serial, label))
         return True
+
+    def timeout_task(self, serial, label):
+        if not self.busy or serial != self.task_serial:
+            return
+        self.write_log("[TIMEOUT] " + label + " exceeded the diagnostic time limit. Stopping automatically.")
+        pid = int(self.task.processId())
+        if sys.platform == "win32" and pid:
+            subprocess.Popen(["taskkill", "/PID", str(pid), "/T", "/F"],
+                             creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            self.task.kill()
 
     def task_failed(self, message):
         self.busy = False; self.stop_btn.setEnabled(False)
@@ -799,6 +815,8 @@ class Studio(QMainWindow):
                 self.write_log(("[OK] " if ok else "[MISSING] ") + key + ": " + detail)
         if log:
             self.write_log("Dependency scan finished. Nothing was installed or changed.")
+            if self.dep_results["packer"][0] and not self.busy:
+                QTimer.singleShot(0, self.verify_packer)
         return self.dep_results
 
     def install_missing(self):
@@ -863,7 +881,7 @@ class Studio(QMainWindow):
             self.warn("Packer not installed", "Choose Install next to Python/.NET shader packer first.")
             return
         self.run_task(["cmd.exe", "/d", "/c", str(self.repo / "scripts/bananative.bat"), "check"],
-                      "Verifying installed packer (no changes)")
+                      "Verifying installed packer (no changes)", timeout_ms=60000)
 
     def preflight(self):
         if self.busy:
