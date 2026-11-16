@@ -93,7 +93,7 @@ def light_palette():
 
 
 def button(title, callback, primary=False):
-    b = QPushButton(title)
+    b = QPushButton(title.replace("&", "&&"))
     if primary:
         b.setObjectName("Primary")
     b.clicked.connect(callback)
