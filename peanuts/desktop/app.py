@@ -14,7 +14,7 @@ import uuid
 from pathlib import Path
 
 from PySide6.QtCore import QProcess, QProcessEnvironment, QSettings, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QGridLayout,
     QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QMainWindow,
@@ -183,13 +183,22 @@ class Studio(QMainWindow):
         QTimer.singleShot(500, self.refresh_devices)
 
     def make_icon(self):
-        pix = QPixmap(64, 64); pix.fill(Qt.GlobalColor.transparent)
+        """Peanuts Native's green-and-gold hourglass motif, drawn as vectors."""
+        pix = QPixmap(64, 64)
+        pix.fill(Qt.GlobalColor.transparent)
         p = QPainter(pix)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setBrush(QColor("#eab955")); p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(5, 5, 54, 54)
-        p.setBrush(QColor("#172233"))
-        p.drawEllipse(20, 15, 12, 18); p.drawEllipse(34, 29, 12, 18)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor("#21644a"))
+        p.drawEllipse(3, 3, 58, 58)
+        p.setBrush(QColor("#fff9df"))
+        p.drawRoundedRect(23, 10, 19, 45, 9, 9)
+        p.setBrush(QColor("#ffd547"))
+        p.setPen(QPen(QColor("#4b321f"), 2.3))
+        p.drawRoundedRect(23, 16, 19, 12, 4, 4)
+        p.drawRoundedRect(23, 36, 19, 12, 4, 4)
+        p.setPen(QPen(QColor("#e4b12b"), 2.1))
+        p.drawArc(27, 27, 12, 10, 180 * 16, 180 * 16)
         p.end()
         return QIcon(pix)
 
@@ -199,8 +208,16 @@ class Studio(QMainWindow):
         outer = QHBoxLayout(root); outer.setContentsMargins(0, 0, 0, 0); outer.setSpacing(0)
         rail = QFrame(); rail.setObjectName("Sidebar"); rail.setFixedWidth(220)
         rv = QVBoxLayout(rail); rv.setContentsMargins(12, 22, 12, 18); rv.setSpacing(9)
-        brand = QLabel("●  PEANUTS\n    STUDIO"); brand.setObjectName("Brand")
-        rv.addWidget(brand); rv.addSpacing(24)
+        brandline = QHBoxLayout()
+        insignia = QLabel()
+        insignia.setPixmap(self.make_icon().pixmap(54, 54))
+        insignia.setFixedSize(56, 56)
+        brandline.addWidget(insignia)
+        brand = QLabel("PEANUTS\nSTUDIO")
+        brand.setObjectName("Brand")
+        brandline.addWidget(brand, 1)
+        rv.addLayout(brandline)
+        rv.addSpacing(23)
         self.navs = []
         names = [
             ("◈  Dashboard", "overview", self.page_overview),
