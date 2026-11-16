@@ -77,8 +77,9 @@ function Invoke-Setup([string]$folder) {   # make the environment in <folder>\ba
 }
 
 $cmd = if ($args.Count -gt 0) { $args[0] } else { 'gui' }
-$rest = if ($args.Count -gt 1) { @($args[1..($args.Count - 1)]) } else { @() }   # always an array: one positional folder must not become its first character
-if ($cmd -eq 'setup') { Invoke-Setup ($(if ($rest.Count) { $rest[0] } else { '' })) | Out-Null; exit 0 }
+[string[]]$rest = @()
+if ($args.Count -gt 1) { $rest = @($args[1..($args.Count - 1)]) }   # typing avoids PowerShell's one-element pipeline unwrapping
+if ($cmd -eq 'setup') { Invoke-Setup ($(if ($args.Count -gt 1) { [string]$args[1] } else { '' })) | Out-Null; exit 0 }
 
 $envDir = Find-Env
 if ($envDir) {
