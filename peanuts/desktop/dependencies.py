@@ -102,7 +102,7 @@ def dependency_status(repo, *, adb="", root="", deep=False):
     bash = root / "usr/bin/bash.exe"
     gcc = binpath / "gcc.exe"
     required = [gcc, binpath / "g++.exe", binpath / "cmake.exe",
-                binpath / "mingw32-make.exe", root / "usr/bin/patch.exe",
+                binpath / "ctest.exe", binpath / "mingw32-make.exe", root / "usr/bin/patch.exe",
                 root / "ucrt64/include/zlib.h"]
     zlib = any((root / "ucrt64/lib" / name).is_file()
                for name in ("libz.a", "libz.dll.a", "zlib.lib"))
