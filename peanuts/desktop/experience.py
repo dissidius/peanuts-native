@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 
 CREAM_STYLE = """
 QMainWindow, QWidget#Main, QScrollArea { background:#fbf6e9; }
+QWidget#PageSurface { background:#fbf6e9; }
 QWidget { color:#38291c; font: 12px 'Segoe UI'; }
 QFrame#Sidebar { background:#fffdf8; border-right:1px solid #ecdfc1; }
 QFrame#Card { background:#fffdfa; border:1px solid #e8d8b9; border-radius:17px; }
