@@ -13,7 +13,6 @@ function Need([string]$name, [string]$hint) {
 Need cmake 'Install MSYS2 UCRT64 CMake (mingw-w64-ucrt-x86_64-cmake).'
 Need gcc 'Install the MSYS2 UCRT64 gcc package (mingw-w64-ucrt-x86_64-gcc).'
 Need mingw32-make 'Install the MSYS2 UCRT64 make package (mingw-w64-ucrt-x86_64-make).'
-Need python 'Install Python 3 and add it to PATH (or let the packer bootstrap its own Python).'
 $Build = Join-Path $Repo 'peanuts\.build\nximport'
 Write-Host '[1/4] Compile the Windows importer' -ForegroundColor Cyan
 & cmake -S (Join-Path $Repo 'dm\peanuts\import') -B $Build -G 'MinGW Makefiles' -DCMAKE_BUILD_TYPE=Release
