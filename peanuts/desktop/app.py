@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 import core
 import dependencies as deps
 import experience
+import progress as shader_progress
 
 APP_NAME = "Peanuts Studio"
 RE_PROGRESS = re.compile(r"^progress:? (\d+)[ /](\d+)")
@@ -192,6 +193,9 @@ class Studio(QMainWindow):
         self.install_active = None
         self.task_mode = ""
         self.task_serial = 0
+        self._task_output_fragment = ""
+        self._task_raw_log = []
+        self._progress_milestones = shader_progress.Milestones()
         self.busy = False
         self.pending_id = ""
         self.latest = {}
@@ -650,10 +654,14 @@ class Studio(QMainWindow):
         self.task_mode = label
         self.task_serial += 1
         serial = self.task_serial
-        self.task_label.setText(label); self.progress.setRange(0, 0)
+        self._task_output_fragment = ""
+        self._task_raw_log = []
+        self._progress_milestones = shader_progress.Milestones()
+        self.task_label.setText(label)
+        self.progress.setRange(0, 0)
         self.progress.show()
-        if not self.console.isVisible():
-            self.toggle_logs()
+        # A game build may run for hours. Keep the activity bar compact while
+        # preserving the option to open logs; never fill the Tools page by default.
         self.write_log("▶  " + label)
         # Deliberately do not print command argv: it may contain the private path to keys.
         env = QProcessEnvironment()
@@ -693,20 +701,43 @@ class Studio(QMainWindow):
         self.install_active = None
         self.warn("Could not start", message)
 
+    def _process_task_line(self, line):
+        if not line.strip():
+            return
+        if self.keys.text():
+            line = line.replace(self.keys.text(), "[local keys path]")
+        self._task_raw_log.append(line)
+        # Keep bounded history for diagnostics; the live progress bar only
+        # requires the newest work units and never a huge QTextEdit history.
+        if len(self._task_raw_log) > 120000:
+            del self._task_raw_log[:30000]
+        info = shader_progress.parse(line)
+        if info is not None:
+            self.progress.setRange(0, 100)
+            self.progress.setValue(info.percent)
+            self.task_label.setText(info.text)
+            self.task_label.setToolTip(info.text)
+            if self._progress_milestones.should_log(info):
+                self.write_log(info.text)
+            return
+        if line.startswith("stage: "):
+            self.task_label.setText(line[7:].strip())
+        self.write_log(line)
+
     def task_output(self):
-        output = bytes(self.task.readAllStandardOutput()).decode("utf-8", "replace")
-        # Work with CR updates from native importer as well as line-oriented Python output.
-        for line in output.replace("\r", "\n").splitlines():
-            if not line.strip(): continue
-            if self.keys.text(): line = line.replace(self.keys.text(), "[local keys path]")
-            self.write_log(line)
-            m = RE_PROGRESS.search(line.strip())
-            if m and int(m.group(2)) > 0:
-                self.progress.setRange(0, 100)
-                self.progress.setValue(min(100, round(int(m.group(1)) * 100 / int(m.group(2)))))
-            if line.startswith("stage: "): self.task_label.setText(line[7:].strip())
+        chunk = bytes(self.task.readAllStandardOutput()).decode("utf-8", "replace")
+        # QProcess signals carry arbitrary chunks, not always whole lines.
+        combined = (self._task_output_fragment + chunk).replace("\r", "\n")
+        parts = combined.split("\n")
+        self._task_output_fragment = parts.pop()
+        for line in parts:
+            self._process_task_line(line)
 
     def task_finished(self, code, status):
+        self.task_output()
+        if self._task_output_fragment.strip():
+            self._process_task_line(self._task_output_fragment)
+        self._task_output_fragment = ""
         completed_mode = self.task_mode
         self.task_mode = ""
         self.busy = False; self.stop_btn.setEnabled(False)
@@ -1157,10 +1188,17 @@ class Studio(QMainWindow):
     def check_env(self):
         self.check_tools()
 
-    def copy_log(self): QApplication.clipboard().setText(self.console.toPlainText())
+    def copy_log(self):
+        QApplication.clipboard().setText(self.console.toPlainText())
+
     def save_log(self):
         f, _ = QFileDialog.getSaveFileName(self, "Save activity", "peanuts-studio-log.txt", "Text files (*.txt)")
-        if f: Path(f).write_text(self.console.toPlainText() + "\n", encoding="utf-8")
+        if f:
+            report = self.console.toPlainText() + "\n"
+            if self._task_raw_log:
+                report += "\n--- FULL RAW PROCESS OUTPUT (including all shader counts) ---\n"
+                report += "\n".join(self._task_raw_log) + "\n"
+            Path(f).write_text(report, encoding="utf-8")
 
     def closeEvent(self, event):
         if self.busy:
