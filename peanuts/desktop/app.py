@@ -390,9 +390,9 @@ class Studio(QMainWindow):
         self.library.setMinimumHeight(190)
         self.library.itemSelectionChanged.connect(self.selected_game)
         body.addWidget(self.library)
-        self.game_id = QLineEdit(); self.game_id.setPlaceholderText("Select a row or paste a 16-character title ID")
+        self.game_id = QLineEdit(); self.game_id.setPlaceholderText("Select a row or enter a 16-character title ID")
         body.addLayout(row(labelled("Selected game", self.game_id),
-                           button("Refresh status", self.refresh_status)))
+                           button("Refresh status", self.request_device_status)))
         body.addLayout(row(button("Build on Android", lambda: self.game_ctl("build")),
                            button("Prepare again", lambda: self.game_ctl("prepare")),
                            button("Play", lambda: self.game_ctl("play"), True),
@@ -414,10 +414,21 @@ class Studio(QMainWindow):
         self.setting_values("fps_cap")
         body.addLayout(row(labelled("Setting", self.setting_key), labelled("Value", self.setting_value),
                            button("Apply selected game", self.apply_setting)))
-        body.addLayout(row(button("Companion catalog", lambda: self.control("companion", {"do":"list"})),
+        body.addWidget(muted("These are the settings supported by the Android app's guarded ADB interface. Other graphics, motion, controller and frame-generation options are managed in the Android UI."))
+        body.addLayout(row(button("Open companion catalog", lambda: self.show_page(self.nav_map["companions"])),
                            button("Install companion", lambda: self.companion_ctl("install")),
                            button("Update companion", lambda: self.companion_ctl("update")),
                            button("Remove companion", lambda: self.companion_ctl("remove"))))
+        v.addWidget(c)
+        c, body = card("Open Android settings", "Navigate the real Android app for functions that its ADB bridge does not expose.")
+        body.addLayout(row(button("Game defaults", lambda: self.android_section("Game defaults"), True),
+                           button("Library and folders", lambda: self.android_section("Library")),
+                           button("System", lambda: self.android_section("System"))))
+        body.addLayout(row(button("Game performance", lambda: self.android_game_tab("performance")),
+                           button("Game settings", lambda: self.android_game_tab("game")),
+                           button("Saves", lambda: self.android_game_tab("saves")),
+                           button("Storage", lambda: self.android_game_tab("storage"))))
+        body.addWidget(muted("Advanced GPU drivers, frame generation, screen rotation, button mapping, and motion are accessible in the app's own settings, not through unsupported desktop toggles."))
         v.addWidget(c); v.addStretch(); return page
 
     def page_apk(self):
@@ -751,6 +762,16 @@ class Studio(QMainWindow):
     def control_finished(self, code, status):
         if code: self.write_log("[ADB] Control command failed (exit " + str(code) + ")")
         QTimer.singleShot(650, self.refresh_status)
+
+    def android_section(self, section):
+        self.control("nav", {"to": "settings", "section": section})
+
+    def android_game_tab(self, tab):
+        tid = self.game_id.text().strip().upper()
+        if not core.TITLE.fullmatch(tid):
+            self.warn("Select game", "Select a game first to open its Android settings.")
+            return
+        self.control("nav", {"to": "game", "title_id": tid, "tab": tab})
 
     def game_ctl(self, action):
         tid = self.game_id.text().strip().upper()
