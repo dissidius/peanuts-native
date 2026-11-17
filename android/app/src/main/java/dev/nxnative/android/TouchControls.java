@@ -245,6 +245,16 @@ final class TouchControls extends View {
         float highY = Math.max(y0 + bh * 0.45f, top + rStick);
         boolean dual = playStationSkin();
         float lx = Math.max(m + rStick, bar / 2), ly = dual ? h - m - rStick : highY;
+        if (dual) {
+            // Unlike the offset Switch arrangement, the PlayStation sticks
+            // are both low. Shift its D-pad/face-row *up* enough to clear
+            // those sticks instead of letting the overlap solver drag the
+            // right stick sideways. The same radii/scale as Switch are kept.
+            float faceBottom = off + rFace;
+            float maxHigh = ly - rStick - faceBottom - 4 * d;
+            float minHigh = shY + rSh * 0.62f + rPad + 3 * d;
+            highY = Math.max(minHigh, Math.min(highY, maxHigh));
+        }
         add(STICK, 0, 0, SHAPE_ROUND, lx, ly, rStick, "");
         add(DPAD, UP | DOWN | LEFT | RIGHT, 0, SHAPE_ROUND, Math.max(m + rPad, bar / 2),
                 dual ? highY : h - m - rPad, rPad, "");
