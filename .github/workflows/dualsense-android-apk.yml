@@ -68,6 +68,17 @@ jobs:
             exit 1
           fi
           echo "NX_GAMES_CSV=$(paste -sd, "$RUNNER_TEMP/config/games.txt")" >> "$GITHUB_ENV"
+      - name: Create an isolated development signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEYSTORE="$RUNNER_TEMP/peanuts-native-dualsense.jks"
+          PASSWORD=$(openssl rand -hex 24)
+          keytool -genkeypair -noprompt -storetype PKCS12 -keystore "$KEYSTORE" -storepass "$PASSWORD" -keypass "$PASSWORD" -alias peanutsds -keyalg RSA -keysize 3072 -validity 3650 -dname "CN=Peanuts Native DualSense Personal Build,O=Development,C=US"
+          echo "NX_SIGN_STORE=$KEYSTORE" >> "$GITHUB_ENV"
+          echo "NX_SIGN_ALIAS=peanutsds" >> "$GITHUB_ENV"
+          echo "NX_SIGN_PASS=$PASSWORD" >> "$GITHUB_ENV"
+          echo "::notice::This personal signing key is not the upstream release signing key; the official APK cannot be upgraded in place."
       - name: Build same-ID APK (cannot overwrite official signer)
         shell: bash
         run: |
@@ -75,7 +86,7 @@ jobs:
           cd android/app
           chmod +x gradlew
           ./gradlew --no-daemon assembleRelease \
-            -PnxApp=peanuts -PnxGenericHost=true \
+            -PnxApp=peanuts -PnxRelease=true -PnxLabel='Peanuts Native' -PnxGenericHost=true \
             "-PnxGames=$NX_GAMES_CSV" \
             "-PnxPackStage=$NX_PACK_STAGE" -PnxPackEngine=native \
             -PnxVersion=0.1.3-dualsense -PnxVersionCode=14 --stacktrace
@@ -87,7 +98,7 @@ jobs:
           set -euo pipefail
           cd android/app
           ./gradlew --no-daemon assembleRelease \
-            -PnxApp=peanuts -PnxAppId=peanutsds -PnxLabel="Peanuts Native DualSense" \
+            -PnxApp=peanuts -PnxRelease=true -PnxAppId=peanutsds -PnxLabel="Peanuts Native DualSense" \
             -PnxGenericHost=true "-PnxGames=$NX_GAMES_CSV" \
             "-PnxPackStage=$NX_PACK_STAGE" -PnxPackEngine=native \
             -PnxVersion=0.1.3-dualsense -PnxVersionCode=14 --stacktrace
