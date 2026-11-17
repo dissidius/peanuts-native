@@ -477,6 +477,13 @@ class Studio(QMainWindow):
         body.addWidget(labelled("ADB destination", self.transfer_dest))
         body.addLayout(row(button("Send to phone", self.push_existing, True),
                            button("Rescan library", lambda: self.control("scan"))))
+        self.transfer_status = muted("Transfer idle · select a prepared pack and game file")
+        self.transfer_status.setWordWrap(True)
+        self.transfer_progress = QProgressBar()
+        self.transfer_progress.setRange(0, 100)
+        self.transfer_progress.setVisible(False)
+        body.addWidget(self.transfer_status)
+        body.addWidget(self.transfer_progress)
         v.addWidget(c)
         c, body = card("APK install / logs", "APK installation may fail when the installed app is signed with a different key. Do not uninstall the existing app to force an update.")
         self.apk_to_install = QLineEdit(); self.apk_to_install.setPlaceholderText("Select a locally built Android APK")
@@ -747,6 +754,10 @@ class Studio(QMainWindow):
                       f" · {speed} · ETA {eta_label}")
             self.task_label.setText(detail)
             self.task_label.setToolTip(detail)
+            self.transfer_status.setText(detail)
+            self.transfer_progress.setRange(0, 100)
+            self.transfer_progress.setValue(percent)
+            self.transfer_progress.show()
             milestone = percent // 5
             signature = (phase, milestone)
             if signature != getattr(self, "_last_transfer_milestone", None):
@@ -808,6 +819,15 @@ class Studio(QMainWindow):
             self.task_label.setText("Exit code " + str(code))
             self.write_log("✗  Task exited with code " + str(code))
         self.progress.hide()
+        if completed_mode.startswith("ADB transfer"):
+            self.transfer_status.setText(
+                "Transfer completed · pack and game files uploaded successfully"
+                if code == 0 else
+                "Transfer interrupted or failed · check the activity logs before retrying")
+            if code == 0:
+                self.transfer_progress.setValue(100)
+            else:
+                self.transfer_progress.setToolTip("Transfer incomplete; original game and pack remain on the PC.")
         if completed_mode.startswith("Verifying installed packer"):
             label, install = self.dependency_rows["packer"]
             if code == 0:
