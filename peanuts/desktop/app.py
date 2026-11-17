@@ -1280,14 +1280,25 @@ def main():
         QMessageBox.critical(None, "Peanuts Studio", str(e))
         return 2
     win.show()
-    previews = ("--preview", "--preview-tools", "--preview-dialog", "--preview-shaders")
+    previews = ("--preview", "--preview-tools", "--preview-dialog", "--preview-shaders", "--preview-transfer")
     selected = next((mode for mode in previews if mode in sys.argv), None)
     if selected:
         # Real Windows screenshots, without mock device/game data.
         at = sys.argv.index(selected)
         destination = sys.argv[at + 1] if at + 1 < len(sys.argv) else 'PeanutsStudio-preview.png'
         def capture():
-            win.show_page(win.nav_map["tools"] if selected != "--preview" else win.nav_map["overview"])
+            win.show_page(win.nav_map["device"] if selected == "--preview-transfer"
+                          else win.nav_map["overview"] if selected == "--preview"
+                          else win.nav_map["tools"])
+            if selected == "--preview-transfer":
+                # Static screenshot test only: no adb, transfer or real game data.
+                win.task_label.setText("ADB transfer")
+                fake = {"phase": "Game file", "done": 3_600_000_000,
+                        "total": 9_000_000_000, "stage_done": 2_000_000_000,
+                        "stage_total": 7_400_000_000, "percent": 40,
+                        "rate": 39_000_000, "eta_seconds": 138,
+                        "source": "device"}
+                win._process_task_line("PEANUTS_TRANSFER" + chr(9) + json.dumps(fake))
             if selected == "--preview-shaders":
                 # Screenshot-only synthetic fixture: no game, device or builder is started.
                 win.task_label.setText("Preparing shader translation")
