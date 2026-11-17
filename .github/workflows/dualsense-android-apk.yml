@@ -79,17 +79,39 @@ jobs:
             test -f "dm/games/$game/game.tsv" || { echo "::error::Missing profile: $game"; exit 1; }
           done < "$RUNNER_TEMP/config/games.txt"
           echo "NX_GAMES_CSV=$(paste -sd, "$RUNNER_TEMP/config/games.txt")" >> "$GITHUB_ENV"
-      - name: Create an isolated development signing key
+      - name: Select a persistent, private Android signer (or isolated one-time key)
         shell: bash
+        env:
+          SIGN_STORE_BASE64: ${{ secrets.PEANUTS_SIGN_STORE_B64 }}
+          SIGN_ALIAS: ${{ secrets.PEANUTS_SIGN_ALIAS }}
+          SIGN_PASSWORD: ${{ secrets.PEANUTS_SIGN_PASS }}
         run: |
           set -euo pipefail
           KEYSTORE="$RUNNER_TEMP/peanuts-native-dualsense.jks"
-          PASSWORD=$(openssl rand -hex 24)
-          keytool -genkeypair -noprompt -storetype PKCS12 -keystore "$KEYSTORE" -storepass "$PASSWORD" -keypass "$PASSWORD" -alias peanutsds -keyalg RSA -keysize 3072 -validity 3650 -dname "CN=Peanuts Native DualSense Personal Build,O=Development,C=US"
+          if [ -n "$SIGN_STORE_BASE64" ] && [ -n "$SIGN_ALIAS" ] && [ -n "$SIGN_PASSWORD" ]; then
+            # Private bytes are never committed, placed in artifacts, or printed.
+            printf '%s' "$SIGN_STORE_BASE64" | base64 -d > "$KEYSTORE"
+            test -s "$KEYSTORE"
+            keytool -list -keystore "$KEYSTORE" -storepass "$SIGN_PASSWORD" -alias "$SIGN_ALIAS" >/dev/null
+            echo "NX_SIGN_ALIAS=$SIGN_ALIAS" >> "$GITHUB_ENV"
+            echo "NX_SIGN_PASS=$SIGN_PASSWORD" >> "$GITHUB_ENV"
+            echo "PEANUTS_SIGN_MODE=persistent-secret" >> "$GITHUB_ENV"
+            echo "::notice::Using repository's persistent signing secret. It permits updates ONLY when the installed app has the same certificate."
+          else
+            PASSWORD=$(openssl rand -hex 24)
+            keytool -genkeypair -noprompt -storetype PKCS12 -keystore "$KEYSTORE" -storepass "$PASSWORD" -keypass "$PASSWORD" -alias peanutsds -keyalg RSA -keysize 3072 -validity 3650 -dname "CN=Peanuts Native DualSense Personal Build,O=Development,C=US"
+            echo "NX_SIGN_ALIAS=peanutsds" >> "$GITHUB_ENV"
+            echo "NX_SIGN_PASS=$PASSWORD" >> "$GITHUB_ENV"
+            echo "PEANUTS_SIGN_MODE=one-time" >> "$GITHUB_ENV"
+            echo "::warning::No persistent keystore configured. This release uses a fresh signing key and CANNOT upgrade either earlier APK variant in place. Do not uninstall apps without backing up data."
+          fi
+          chmod 600 "$KEYSTORE"
           echo "NX_SIGN_STORE=$KEYSTORE" >> "$GITHUB_ENV"
-          echo "NX_SIGN_ALIAS=peanutsds" >> "$GITHUB_ENV"
-          echo "NX_SIGN_PASS=$PASSWORD" >> "$GITHUB_ENV"
-          echo "::notice::This personal signing key is not the upstream release signing key; the official APK cannot be upgraded in place."
+          # Public certificate fingerprint helps users diagnose signature mismatch
+          # without disclosing the private key or copying it into artifacts.
+          keytool -list -v -keystore "$KEYSTORE" \
+            -storepass "${SIGN_PASSWORD:-${PASSWORD:-}}" \
+            -alias "${SIGN_ALIAS:-peanutsds}" | grep -E 'SHA256:|SHA1:'
       - name: Build same-ID APK (cannot overwrite official signer)
         shell: bash
         run: |
