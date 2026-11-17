@@ -159,13 +159,16 @@ jobs:
           side="$APK_DIR/PeanutsNative-DualSense-side-by-side.apk"
           "$APKSIGNER" verify --verbose --print-certs "$same"
           "$APKSIGNER" verify --verbose --print-certs "$side"
-          "$AAPT" dump badging "$same" | head -1 | grep -F "name='dev.nxnative.android.peanuts'"
-          "$AAPT" dump badging "$side" | head -1 | grep -F "name='dev.nxnative.android.peanutsds'"
-          for apk in "$same" "$side"; do
-            "$AAPT" dump badging "$apk" | head -1 | grep -F "versionCode='$NX_VERSION_CODE'"
-          done
+          same_pkg=$("$AAPT" dump badging "$same" | sed -n '1p')
+          side_pkg=$("$AAPT" dump badging "$side" | sed -n '1p')
+          [[ "$same_pkg" == *"name='dev.nxnative.android.peanuts'"* ]]
+          [[ "$side_pkg" == *"name='dev.nxnative.android.peanutsds'"* ]]
+          [[ "$same_pkg" == *"versionCode='$NX_VERSION_CODE'"* ]]
+          [[ "$side_pkg" == *"versionCode='$NX_VERSION_CODE'"* ]]
+          echo "$same_pkg"
+          echo "$side_pkg"
           sha_of() {
-            "$APKSIGNER" verify --print-certs "$1" | sed -n 's/.*Signer #1 certificate SHA-256 digest: //p' | head -1
+            "$APKSIGNER" verify --print-certs "$1" | sed -n 's/.*Signer #1 certificate SHA-256 digest: //p'
           }
           CERT1=$(sha_of "$same")
           CERT2=$(sha_of "$side")
