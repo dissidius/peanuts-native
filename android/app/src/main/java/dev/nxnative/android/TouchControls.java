@@ -586,7 +586,16 @@ final class TouchControls extends View {
     private void drawControls(Canvas c) {
         for (int i = 0; i < n; i++) {
             boolean held = pressed[i] != 0;
-            fill.setColor(held ? Color.argb(alpha(0.55f), 255, 255, 255) : Color.argb(alpha(0.35f), 0, 0, 0));
+            boolean whiteFace = skinStyle == SKIN_DUALSENSE
+                    && kind[i] == BUTTON && (buttons[i] & (A | B | X | Y)) != 0;
+            // DualShock: dark glass and colored PlayStation marks.
+            // DualSense: frosted-white face buttons with graphite marks.
+            // Sticks, D-pad, triggers and touch areas retain their original geometry.
+            fill.setColor(whiteFace
+                    ? (held ? Color.argb(alpha(0.92f), 247, 249, 253)
+                            : Color.argb(alpha(0.67f), 247, 249, 253))
+                    : (held ? Color.argb(alpha(0.55f), 255, 255, 255)
+                            : Color.argb(alpha(0.35f), 0, 0, 0)));
             line.setColor(Color.argb(alpha(0.9f), 255, 255, 255));
             if (kind[i] == STICK) drawStick(c, i);
             else if (kind[i] == DPAD) drawDpad(c, i);
@@ -629,8 +638,9 @@ final class TouchControls extends View {
                 : bit == A ? Color.rgb(241, 113, 130)      // Circle: right Nintendo A
                 : bit == Y ? Color.rgb(218, 137, 226)      // Square: left Nintendo Y
                 : Color.rgb(105, 165, 252);               // Cross: bottom Nintendo B
-        if (skinStyle == SKIN_DUALSENSE) color = Color.rgb(245, 248, 255); // DualSense: monochrome white
-        line.setColor(held ? Color.argb(alpha(1f), 20, 24, 34)
+        if (skinStyle == SKIN_DUALSENSE) color = Color.rgb(38, 48, 63); // dark gray on frosted white
+        line.setColor(held && skinStyle != SKIN_DUALSENSE
+                ? Color.argb(alpha(1f), 20, 24, 34)
                 : Color.argb(alpha(1f), Color.red(color), Color.green(color), Color.blue(color)));
         float z = radius * 0.44f;
         line.setStrokeWidth(Math.max(1.6f * getResources().getDisplayMetrics().density, radius * 0.11f));
