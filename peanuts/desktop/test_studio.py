@@ -231,6 +231,15 @@ class Desktop(unittest.TestCase):
         self.assertEqual(win.progress.value(), 74)
         self.assertIn("54,080/73,496", win.task_label.text())
         self.assertEqual(len(win._task_raw_log), 1)
+        import json
+        payload = {"phase": "Game file", "done": 2_400_000_000, "total": 6_000_000_000,
+                   "stage_done": 900_000_000, "stage_total": 4_500_000_000,
+                   "percent": 40, "rate": 38_000_000, "eta_seconds": 95,
+                   "source": "device"}
+        win._process_task_line("PEANUTS_TRANSFER" + chr(9) + json.dumps(payload))
+        self.assertEqual(win.progress.value(), 40)
+        self.assertIn("Game file", win.task_label.text())
+        self.assertIn("ETA ~1m 35s", win.task_label.text())
         win.close()
         qapp.processEvents()
 
