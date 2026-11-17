@@ -301,7 +301,9 @@ class AdbTransferProgress(unittest.TestCase):
         sys.path.insert(0, str(SCRIPTS))
         try:
             with tempfile.TemporaryDirectory() as d:
-                pack = self.pack(d)
+                pack = Path(d, TITLE + '-work', 'android-pack')
+                pack.mkdir(parents=True)
+                (pack / 'pack.tsv').write_text('title_id\\t' + TITLE + '\\n')
                 (pack / 'shader.lib').write_bytes(b'x' * 32)
                 game = Path(d, 'Test.nup')
                 game.write_bytes(b'y' * 75)
