@@ -60,6 +60,11 @@ class Meter:
             self.source = source
             self._emit()
 
+    def heartbeat(self):
+        """Emit the elapsed/ETA even if adb has not supplied a percentage yet."""
+        with self._lock:
+            self._emit(force=True)
+
     def completed(self):
         with self._lock:
             self.committed = min(self.total, self.committed + self.stage_size)
@@ -118,6 +123,7 @@ class RemoteSizeWatcher:
         cmd = "du -sk " if is_dir else "stat -c %s "
         cmd += shlex.quote(remote)
         while not self.stop.wait(2):
+            meter.heartbeat()
             try:
                 check = subprocess.run([executable, "-s", serial, "shell", cmd],
                     capture_output=True, text=True, timeout=3, errors="replace",
