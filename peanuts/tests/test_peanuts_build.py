@@ -276,7 +276,7 @@ class AdbTransferProgress(unittest.TestCase):
         tp = load('transfer_progress_test', 'transfer_progress.py')
         events = []
         now = [0]
-        meter = tp.Meter(1500, output=lambda message, flush: events.append(json.loads(message.split('\\t', 1)[1])),
+        meter = tp.Meter(1500, output=lambda message, flush: events.append(json.loads(message.split(chr(9), 1)[1])),
                          clock=lambda: now[0])
         meter.begin('Shader pack', 500)
         now[0] = 2
@@ -320,7 +320,7 @@ class AdbTransferProgress(unittest.TestCase):
             stage = Path(d, 'fake.nup')
             stage.write_bytes(b'x')
             output = []
-            meter = tp.Meter(1000, output=lambda message, flush: output.append(json.loads(message.split('\\t', 1)[1])))
+            meter = tp.Meter(1000, output=lambda message, flush: output.append(json.loads(message.split(chr(9), 1)[1])))
             code = ('import sys;'
                     'sys.stdout.write("[ 23%] fake.nup\\r[ 88%] fake.nup\\r1 file pushed\\n");'
                     'sys.stdout.flush()')
