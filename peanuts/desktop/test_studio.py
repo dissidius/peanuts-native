@@ -238,8 +238,10 @@ class Desktop(unittest.TestCase):
                    "source": "device"}
         win._process_task_line("PEANUTS_TRANSFER" + chr(9) + json.dumps(payload))
         self.assertEqual(win.progress.value(), 40)
+        self.assertEqual(win.transfer_progress.value(), 40)
         self.assertIn("Game file", win.task_label.text())
         self.assertIn("ETA ~1m 35s", win.task_label.text())
+        self.assertIn("MiB/s", win.transfer_status.text())
         win.close()
         qapp.processEvents()
 
