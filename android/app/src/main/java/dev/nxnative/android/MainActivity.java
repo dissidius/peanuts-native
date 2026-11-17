@@ -242,6 +242,14 @@ public final class MainActivity extends Activity {
                 .setNegativeButton("Cancel", null).show());
         touch.value(touchLabel(TouchControls.mode(this)));
         play.addView(touch.view);
+        // The virtual face symbols and thumbstick arrangement are selectable independently of the game's mapping.
+        Ui.Setting touchSkin = new Ui.Setting(this, "🎨", "Virtual controller style", null).chevron(this);
+        touchSkin.view.setOnClickListener(v -> new PadFocus.Builder(this).setTitle("Virtual controller style")
+                .setSingleChoiceItems(TouchControls.SKIN_NAMES, TouchControls.skin(this),
+                        (d, w) -> { TouchControls.skin(this, w); touchSkin.value(TouchControls.SKIN_NAMES[w]); d.dismiss(); })
+                .setNegativeButton("Cancel", null).show());
+        touchSkin.value(TouchControls.SKIN_NAMES[TouchControls.skin(this)]);
+        play.addView(touchSkin.view);
         Ui.Setting rot = new Ui.Setting(this, "🔄", "Screen rotation", null).chevron(this);
         rot.view.setOnClickListener(v -> new PadFocus.Builder(this).setTitle("Screen rotation")
                 .setSingleChoiceItems(Prefs.ROTATION_NAMES, Prefs.rotationAuto(this) ? 1 : 0, (d, w) -> { Prefs.rotationAuto(this, w == 1); rot.value(rotationLabel(w == 1)); d.dismiss(); })
