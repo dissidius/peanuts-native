@@ -79,7 +79,7 @@ jobs:
             test -f "dm/games/$game/game.tsv" || { echo "::error::Missing profile: $game"; exit 1; }
           done < "$RUNNER_TEMP/config/games.txt"
           echo "NX_GAMES_CSV=$(paste -sd, "$RUNNER_TEMP/config/games.txt")" >> "$GITHUB_ENV"
-      - name: Select a persistent, private Android signer (or isolated one-time key)
+      - name: Require persistent, private Android signing key
         shell: bash
         env:
           SIGN_STORE_BASE64: ${{ secrets.PEANUTS_SIGN_STORE_B64 }}
@@ -87,31 +87,24 @@ jobs:
           SIGN_PASSWORD: ${{ secrets.PEANUTS_SIGN_PASS }}
         run: |
           set -euo pipefail
-          KEYSTORE="$RUNNER_TEMP/peanuts-native-dualsense.jks"
-          if [ -n "$SIGN_STORE_BASE64" ] && [ -n "$SIGN_ALIAS" ] && [ -n "$SIGN_PASSWORD" ]; then
-            # Private bytes are never committed, placed in artifacts, or printed.
-            printf '%s' "$SIGN_STORE_BASE64" | base64 -d > "$KEYSTORE"
-            test -s "$KEYSTORE"
-            keytool -list -keystore "$KEYSTORE" -storepass "$SIGN_PASSWORD" -alias "$SIGN_ALIAS" >/dev/null
-            echo "NX_SIGN_ALIAS=$SIGN_ALIAS" >> "$GITHUB_ENV"
-            echo "NX_SIGN_PASS=$SIGN_PASSWORD" >> "$GITHUB_ENV"
-            echo "PEANUTS_SIGN_MODE=persistent-secret" >> "$GITHUB_ENV"
-            echo "::notice::Using repository's persistent signing secret. It permits updates ONLY when the installed app has the same certificate."
-          else
-            PASSWORD=$(openssl rand -hex 24)
-            keytool -genkeypair -noprompt -storetype PKCS12 -keystore "$KEYSTORE" -storepass "$PASSWORD" -keypass "$PASSWORD" -alias peanutsds -keyalg RSA -keysize 3072 -validity 3650 -dname "CN=Peanuts Native DualSense Personal Build,O=Development,C=US"
-            echo "NX_SIGN_ALIAS=peanutsds" >> "$GITHUB_ENV"
-            echo "NX_SIGN_PASS=$PASSWORD" >> "$GITHUB_ENV"
-            echo "PEANUTS_SIGN_MODE=one-time" >> "$GITHUB_ENV"
-            echo "::warning::No persistent keystore configured. This release uses a fresh signing key and CANNOT upgrade either earlier APK variant in place. Do not uninstall apps without backing up data."
+          # Deliberately fail closed: ephemeral signatures make the next APK
+          # incompatible with the previous installation, risking user data.
+          if [ -z "$SIGN_STORE_BASE64" ] || [ -z "$SIGN_ALIAS" ] || [ -z "$SIGN_PASSWORD" ]; then
+            echo "::error::Persistent signing is required. Configure all three repository Actions secrets: PEANUTS_SIGN_STORE_B64, PEANUTS_SIGN_ALIAS, PEANUTS_SIGN_PASS. See android/DUALSENSE_SIGNING.md."
+            exit 1
           fi
-          chmod 600 "$KEYSTORE"
+          umask 077
+          KEYSTORE="$RUNNER_TEMP/peanuts-native-dualsense.p12"
+          printf '%s' "$SIGN_STORE_BASE64" | base64 --decode > "$KEYSTORE"
+          test -s "$KEYSTORE"
+          keytool -list -keystore "$KEYSTORE" -storepass "$SIGN_PASSWORD" -alias "$SIGN_ALIAS" >/dev/null
           echo "NX_SIGN_STORE=$KEYSTORE" >> "$GITHUB_ENV"
-          # Public certificate fingerprint helps users diagnose signature mismatch
-          # without disclosing the private key or copying it into artifacts.
-          keytool -list -v -keystore "$KEYSTORE" \
-            -storepass "${SIGN_PASSWORD:-${PASSWORD:-}}" \
-            -alias "${SIGN_ALIAS:-peanutsds}" | grep -E 'SHA256:|SHA1:'
+          echo "NX_SIGN_ALIAS=$SIGN_ALIAS" >> "$GITHUB_ENV"
+          echo "NX_SIGN_PASS=$SIGN_PASSWORD" >> "$GITHUB_ENV"
+          # Monotonic across new workflow runs, and above the earlier test code 14.
+          echo "NX_VERSION_CODE=$((10000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          echo "::notice::Using persistent private signer. Existing installations can update only if signed with its certificate."
+          keytool -list -v -keystore "$KEYSTORE" -storepass "$SIGN_PASSWORD" -alias "$SIGN_ALIAS" | grep -E 'SHA256:|SHA1:'
       - name: Build same-ID APK (cannot overwrite official signer)
         shell: bash
         run: |
@@ -122,7 +115,7 @@ jobs:
             -PnxApp=peanuts -PnxRelease=true -PnxLabel='Peanuts Native' -PnxGenericHost=true \
             "-PnxGames=$NX_GAMES_CSV" \
             "-PnxPackStage=$NX_PACK_STAGE" -PnxPackEngine=native \
-            -PnxVersion=0.1.3-dualsense -PnxVersionCode=14 --stacktrace
+            -PnxVersion=0.1.3-dualsense "-PnxVersionCode=$NX_VERSION_CODE" --stacktrace
           mkdir -p out
           APK=$(find build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -1)
           test -n "$APK" && test -s "$APK"
@@ -136,7 +129,7 @@ jobs:
             -PnxApp=peanuts -PnxRelease=true -PnxAppId=peanutsds -PnxLabel="Peanuts Native DualSense" \
             -PnxGenericHost=true "-PnxGames=$NX_GAMES_CSV" \
             "-PnxPackStage=$NX_PACK_STAGE" -PnxPackEngine=native \
-            -PnxVersion=0.1.3-dualsense -PnxVersionCode=14 --stacktrace
+            -PnxVersion=0.1.3-dualsense "-PnxVersionCode=$NX_VERSION_CODE" --stacktrace
           APK=$(find build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -1)
           test -n "$APK" && test -s "$APK"
           cp "$APK" out/PeanutsNative-DualSense-side-by-side.apk
@@ -155,6 +148,30 @@ jobs:
             unzip -Z1 "$apk" | grep -Fx 'assets/pack/version.txt'
             unzip -Z1 "$apk" | grep -Fx 'classes.dex'
           done
+      - name: Verify package IDs, signing certificates and version codes
+        shell: bash
+        run: |
+          set -euo pipefail
+          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
+          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          APK_DIR="android/app/out"
+          same="$APK_DIR/PeanutsNative-DualSense-same-package.apk"
+          side="$APK_DIR/PeanutsNative-DualSense-side-by-side.apk"
+          "$APKSIGNER" verify --verbose --print-certs "$same"
+          "$APKSIGNER" verify --verbose --print-certs "$side"
+          "$AAPT" dump badging "$same" | head -1 | grep -F "name='dev.nxnative.android.peanuts'"
+          "$AAPT" dump badging "$side" | head -1 | grep -F "name='dev.nxnative.android.peanutsds'"
+          for apk in "$same" "$side"; do
+            "$AAPT" dump badging "$apk" | head -1 | grep -F "versionCode='$NX_VERSION_CODE'"
+          done
+          sha_of() {
+            "$APKSIGNER" verify --print-certs "$1" | sed -n 's/.*Signer #1 certificate SHA-256 digest: //p' | head -1
+          }
+          CERT1=$(sha_of "$same")
+          CERT2=$(sha_of "$side")
+          test -n "$CERT1"
+          test "$CERT1" = "$CERT2" || { echo "::error::APK signer mismatch"; exit 1; }
+          echo "::notice::Both APKs share one persistent signer fingerprint: $CERT1"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: PeanutsNative-v0.1.3-DualSense-REAL-ARM64-APKs
