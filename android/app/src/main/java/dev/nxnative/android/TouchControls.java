@@ -61,8 +61,8 @@ final class TouchControls extends View {
     // The user's layout, one per screen shape (prof: the view's size in steps of 40 units, so a foldable's two screens keep one each): each group (the left stick with L3,
     // the D-pad, the face buttons, the right stick with R3, the left and the right shoulders with − / +) moved by (gdx, gdy) units and scaled by gsc around its centre,
     // and where the picture sits in the free space (placeX, placeY: 0 left / top, 0.5 centred, 1 right / bottom; nxhost_picture_place)
-    private static final int GROUPS = 6;
-    private static final String[] GROUP_NAME = {"left stick", "D-pad", "A B X Y", "right stick", "ZL L −", "ZR R +"};
+    private static final int GROUPS = 8;
+    private static final String[] GROUP_NAME = {"left stick", "D-pad", "A B X Y", "right stick", "left shoulder", "right shoulder", "Create / Select", "Options / Start"};
     private String prof;
     private final float[] gdx = new float[GROUPS], gdy = new float[GROUPS], gsc = new float[GROUPS];
     private float placeX = 0.5f, placeY = 0.5f;
@@ -123,8 +123,10 @@ final class TouchControls extends View {
     private boolean active() { return visible() && (shown || !button) && (mode == MODE_ON || !gamepad); }
 
     static final int MODE_AUTO = 0, MODE_ON = 1, MODE_OFF = 2;
-    static final int SKIN_SWITCH = 0, SKIN_DUALSENSE = 1;
-    static final String[] SKIN_NAMES = {"Switch Pro (classic)", "DualSense (PlayStation)"};
+    static final int SKIN_SWITCH = 0, SKIN_DUALSHOCK = 1, SKIN_DUALSENSE = 2;
+    static final String[] SKIN_NAMES = {"Switch Pro (classic)", "DualShock", "DualSense"};
+    /** Two PlayStation render themes share one layout; the original Switch profile is untouched. */
+    private boolean playStationSkin() { return skinStyle != SKIN_SWITCH; }
     static int skin(Context c) {
         int style = Prefs.open(c, "touch_controls").getInt("skin", SKIN_SWITCH);
         return style >= 0 && style < SKIN_NAMES.length ? style : SKIN_SWITCH;
@@ -138,7 +140,7 @@ final class TouchControls extends View {
         if (style == skinStyle) return;
         skin(getContext(), style);
         skinStyle = style;
-        prof = null; // reload independent dualsense layout edits; legacy Switch keys remain unchanged
+        prof = null; // reload the saved PlayStation layout, separate from the original Switch profile
         relayout();
         invalidate();
         Native.note("on-screen controls skin: " + SKIN_NAMES[style]);
@@ -221,7 +223,8 @@ final class TouchControls extends View {
         // a tablet) they stay where the thumbs are, in the bottom corners, instead of spreading over its height
         float y0 = Math.max(0, h - 380 * d), bh = h - y0;
         float bar = picX * w;   // the width of each letterbox bar
-        float rStick = 60 * d, rRight = skinStyle == SKIN_DUALSENSE ? rStick : 54 * d, rPad = 50 * d, rFace = 25 * d, rSh = 25 * d, rSmall = 17 * d, rClick = 17 * d, off = 1.65f * rFace;
+        float rStick = 60 * d, rRight = playStationSkin() ? rStick : 54 * d;
+        float rPad = 50 * d, rFace = 25 * d, rSh = 25 * d, rSmall = 17 * d, rClick = 17 * d, off = 1.65f * rFace;
         n = 0;
         // Shoulders in the band's top corners, ZL / ZR outside, L / R inside, minus / plus next to them
         float shY = y0 + m + 0.7f * rSh;
@@ -229,13 +232,18 @@ final class TouchControls extends View {
         add(BUTTON, L, 0, SHAPE_SHOULDER, m + 3 * rSh + 10 * d, shY, rSh, "L");
         add(BUTTON, ZR, 0, SHAPE_SHOULDER, w - m - rSh, shY, rSh, "ZR");
         add(BUTTON, R, 0, SHAPE_SHOULDER, w - m - 3 * rSh - 10 * d, shY, rSh, "R");
-        add(BUTTON, MINUS, 0, SHAPE_ROUND, m + 4 * rSh + 22 * d + rSmall, shY, rSmall, "−");
-        add(BUTTON, PLUS, 0, SHAPE_ROUND, w - m - 4 * rSh - 22 * d - rSmall, shY, rSmall, "+");
+        // Switch Pro keeps its EXACT original top-corner Select/Start geometry.
+        // For both PlayStation skins, Moonlight V+'s intuitive low Create/Options
+        // targets live between the corresponding stick and the screen centre.
+        if (!playStationSkin()) {
+            add(BUTTON, MINUS, 0, SHAPE_ROUND, m + 4 * rSh + 22 * d + rSmall, shY, rSmall, "−");
+            add(BUTTON, PLUS, 0, SHAPE_ROUND, w - m - 4 * rSh - 22 * d - rSmall, shY, rSmall, "+");
+        }
         // Switch: offset sticks (left high, right low). DualSense: symmetrical sticks low and D-pad high.
         // Only the layout and icons change: A/B/X/Y and the shoulder bits sent to the game stay unchanged.
         float top = shY + rSh + 10 * d;
         float highY = Math.max(y0 + bh * 0.45f, top + rStick);
-        boolean dual = skinStyle == SKIN_DUALSENSE;
+        boolean dual = playStationSkin();
         float lx = Math.max(m + rStick, bar / 2), ly = dual ? h - m - rStick : highY;
         add(STICK, 0, 0, SHAPE_ROUND, lx, ly, rStick, "");
         add(DPAD, UP | DOWN | LEFT | RIGHT, 0, SHAPE_ROUND, Math.max(m + rPad, bar / 2),
@@ -252,6 +260,18 @@ final class TouchControls extends View {
         add(STICK, 0, 1, SHAPE_ROUND, rx, ry, rRight, "");
         float diagR = (rRight + rClick + 6 * d) * 0.7071f;
         add(BUTTON, RS, 0, SHAPE_ROUND, rx - diagR, ry - diagR, rClick, "R3");
+        if (dual) {
+            // Lower utility controls, like Moonlight V+'s ⋯ (Create) and ≡ (Options).
+            // Same 17-unit button radius as the original Switch Pro + / − buttons.
+            // Clamped outside the analog-stick touch circles; mirrored by default.
+            float lowerY = h - m - rSmall;
+            float menuLeft = Math.max(w * 0.28f, lx + rStick + rSmall + 8 * d);
+            float menuRight = Math.min(w * 0.72f, rx - rRight - rSmall - 8 * d);
+            menuLeft = Math.min(w * 0.5f - rSmall - 4 * d, menuLeft);
+            menuRight = Math.max(w * 0.5f + rSmall + 4 * d, menuRight);
+            add(BUTTON, MINUS, 0, SHAPE_ROUND, menuLeft, lowerY, rSmall, "⋯");
+            add(BUTTON, PLUS, 0, SHAPE_ROUND, menuRight, lowerY, rSmall, "≡");
+        }
         // Push apart what still overlaps (a large size on a small screen): the later control moves towards the middle
         for (int pass = 0; pass < 4; pass++)
             for (int j = 0; j < n; j++)
@@ -287,6 +307,8 @@ final class TouchControls extends View {
         if (b == LS) return 0;
         if (b == RS) return 3;
         if ((b & (A | B | X | Y)) != 0) return 2;
+        if (playStationSkin() && b == MINUS) return 6;
+        if (playStationSkin() && b == PLUS) return 7;
         if ((b & (ZL | L | MINUS)) != 0) return 4;
         return 5;
     }
@@ -316,7 +338,7 @@ final class TouchControls extends View {
     }
 
     private String layoutProfile() {
-        return prof + (skinStyle == SKIN_DUALSENSE ? "#dualsense" : "");
+        return prof + (playStationSkin() ? "#dualsense" : "");  // retain the existing colored-skin layout edits
     }
 
     private void load() {
@@ -567,10 +589,12 @@ final class TouchControls extends View {
                     c.drawCircle(cx[i], cy[i], r[i], fill);
                     c.drawCircle(cx[i], cy[i], r[i], line);
                 }
-                if (skinStyle == SKIN_DUALSENSE && (buttons[i] & (A | B | X | Y)) != 0) {
+                if (playStationSkin() && (buttons[i] & (A | B | X | Y)) != 0) {
                     dualSenseSymbol(c, buttons[i], cx[i], cy[i], r[i], held);
+                } else if (playStationSkin() && (buttons[i] == MINUS || buttons[i] == PLUS)) {
+                    drawPlayStationUtility(c, buttons[i], cx[i], cy[i], r[i], held);
                 } else {
-                    String name = skinStyle == SKIN_DUALSENSE ? dualSenseLabel(buttons[i], label[i]) : label[i];
+                    String name = playStationSkin() ? dualSenseLabel(buttons[i], label[i]) : label[i];
                     text.setColor(held ? Color.argb(alpha(1f), 0, 0, 0) : Color.argb(alpha(1f), 255, 255, 255));
                     text.setTextSize(r[i] * (name.length() > 1 ? 0.72f : 0.95f));
                     c.drawText(name, cx[i], cy[i] - (text.descent() + text.ascent()) / 2, text);
@@ -584,8 +608,8 @@ final class TouchControls extends View {
         if (bit == ZR) return "R2";
         if (bit == L) return "L1";
         if (bit == R) return "R1";
-        if (bit == MINUS) return "Cr";  // Create (small circular touch target)
-        if (bit == PLUS) return "Op";   // Options
+        if (bit == MINUS) return "⋯";  // Create (Nintendo minus input)
+        if (bit == PLUS) return "≡";   // Options (Nintendo plus input)
         return original;
     }
 
@@ -595,6 +619,7 @@ final class TouchControls extends View {
                 : bit == A ? Color.rgb(241, 113, 130)      // Circle: right Nintendo A
                 : bit == Y ? Color.rgb(218, 137, 226)      // Square: left Nintendo Y
                 : Color.rgb(105, 165, 252);               // Cross: bottom Nintendo B
+        if (skinStyle == SKIN_DUALSENSE) color = Color.rgb(245, 248, 255); // DualSense: monochrome white
         line.setColor(held ? Color.argb(alpha(1f), 20, 24, 34)
                 : Color.argb(alpha(1f), Color.red(color), Color.green(color), Color.blue(color)));
         float z = radius * 0.44f;
@@ -609,6 +634,30 @@ final class TouchControls extends View {
             c.drawLine(x + z, y - z, x - z, y + z, line);
         }
         line.setStrokeWidth(Math.max(1.5f, 1.6f * getResources().getDisplayMetrics().density));
+    }
+
+    /** Three dots = Create; three rounded bars = Options. Vector shapes avoid font glyph differences. */
+    private void drawPlayStationUtility(Canvas c, long bit, float x, float y, float radius, boolean held) {
+        int ink = held ? Color.rgb(20, 24, 34) : Color.rgb(247, 249, 255);
+        int color = Color.argb(alpha(0.98f), Color.red(ink), Color.green(ink), Color.blue(ink));
+        line.setColor(color);
+        float d = getResources().getDisplayMetrics().density;
+        float halfWidth = radius * 0.41f;
+        float spacing = radius * 0.26f;
+        if (bit == MINUS) {
+            fill.setColor(color);
+            for (int i = -1; i <= 1; i++)
+                c.drawCircle(x + i * spacing, y, Math.max(d * 1.15f, radius * 0.085f), fill);
+        } else {
+            line.setStrokeWidth(Math.max(d * 1.5f, radius * 0.10f));
+            line.setStrokeCap(Paint.Cap.ROUND);
+            for (int i = -1; i <= 1; i++) {
+                float yy = y + i * spacing;
+                c.drawLine(x - halfWidth, yy, x + halfWidth, yy, line);
+            }
+            line.setStrokeCap(Paint.Cap.BUTT);
+        }
+        line.setStrokeWidth(Math.max(1.5f, 1.6f * d));
     }
 
     /** The editor: the picture's outline, each group's frame (the one held filled), the buttons along the top and what to do */
