@@ -30,7 +30,7 @@ final class CompanionCmd {
         new Thread(() -> {
             try {
                 List<CtlPort.Row> rows = CtlPort.rows(c);   // reads packs: off the main thread
-                if (act.equals("list")) list(rows, id, res);
+                if (act.equals("list")) list(rows, id, r.on("all"), res);
                 else one(c, act, row(rows, id), res);
             } catch (Request.Bad e) {
                 res.fail(e.code, e.getMessage());
@@ -51,7 +51,7 @@ final class CompanionCmd {
         return null;
     }
 
-    private static void list(List<CtlPort.Row> rows, String only, Result res) throws IOException, Request.Bad {
+    private static void list(List<CtlPort.Row> rows, String only, boolean all, Result res) throws IOException, Request.Bad {
         if (only != null) row(rows, only);
         List<Catalog.Item> items = Catalog.fetch();
         List<Map<String, Object>> out = new ArrayList<>();
@@ -70,7 +70,31 @@ final class CompanionCmd {
             m.put("built", x.companionRoot != null);   // a companion goes beside the game's pack: build the game first
             out.add(m);
         }
-        res.ok(items.size() + " companions in the catalog, " + out.size() + " games listed.").put("companions", out);
+        int libraryCount = out.size();
+        if (all && only == null) {
+            for (Catalog.Item it : items) {
+                if (it.titleId == null) continue;
+                boolean listed = false;
+                for (Map<String, Object> entry : out) {
+                    if (it.titleId.equalsIgnoreCase(String.valueOf(entry.get("title_id")))) {
+                        listed = true;
+                        break;
+                    }
+                }
+                if (listed) continue;
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("title_id", it.titleId);
+                m.put("name", it.gameName);
+                m.put("package", it.packageName);
+                m.put("installed", null);
+                m.put("catalog", it.version);
+                m.put("state", "not_installed");
+                m.put("built", false);
+                out.add(m);
+            }
+        }
+        res.ok(items.size() + " companions in the catalog, " + libraryCount + " games listed.")
+                .put("companions", out);
     }
 
     private static void one(Context c, String act, CtlPort.Row x, Result res) throws IOException, Request.Bad {

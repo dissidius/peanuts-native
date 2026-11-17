@@ -1,0 +1,78 @@
+# Validates the Windows PC builder for *Android* packs; the game runtime remains Android ARM64.
+# No copyrighted game, console firmware, or console keys are used in CI.
+name: Windows Android pack builder
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/windows-android-builder.yml'
+      - 'peanuts/scripts/**'
+      - 'peanuts/tests/test_peanuts_build.py'
+      - 'peanuts/docs/BUILDER.md'
+      - 'dm/peanuts/import/**'
+      - 'scripts/bananative.bat'
+      - 'scripts/bananative.ps1'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/windows-android-builder.yml'
+      - 'peanuts/scripts/**'
+      - 'peanuts/tests/test_peanuts_build.py'
+      - 'peanuts/docs/BUILDER.md'
+      - 'dm/peanuts/import/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-importer:
+    runs-on: windows-2025
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.14'
+      - id: msys2
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-make
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-zlib
+            patch
+      - name: Compile importer and run Windows builder tests
+        env:
+          PEANUTS_MSYS2_UCRT64: ${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin
+          PEANUTS_MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        shell: pwsh
+        run: |
+          ./peanuts/scripts/windows-builder-check.ps1 -SkipPackerEnvironment
+      - name: Run Windows Oodle decoder regression suite
+        env:
+          PEANUTS_MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+          PEANUTS_MSYS2_UCRT64: ${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin
+        shell: pwsh
+        run: |
+          & python ./peanuts/tests/test_unoodle.py
+          if ($LASTEXITCODE -ne 0) { throw 'Windows Oodle regression tests failed' }
+      - name: Install and verify the actual Windows shader packer environment
+        shell: pwsh
+        run: |
+          & ./scripts/bananative.bat setup "$env:RUNNER_TEMP"
+          if ($LASTEXITCODE -ne 0) { throw 'Windows packer environment setup failed' }
+          & ./scripts/bananative.bat check
+          if ($LASTEXITCODE -ne 0) { throw 'Windows packer dependency check failed' }
+          & ./scripts/bananative.bat python -c "from Crypto.Cipher import AES; print('Windows Unreal AES ready')"
+          if ($LASTEXITCODE -ne 0) { throw 'Windows Unreal AES dependency missing' }
+          & ./scripts/bananative.bat python ./peanuts/scripts/peanuts_build.py --help
+          if ($LASTEXITCODE -ne 0) { throw 'Windows game builder CLI failed' }
+      - name: Probe Windows batch builder
+        shell: cmd
+        run: |
+          rem The batch entry point runs the Android-pack builder, not a Windows game runtime.
+          if not exist peanuts\scripts\peanuts-build.bat exit /b 1
+          if not exist peanuts\.build\nximport\nximport_cli.exe exit /b 1

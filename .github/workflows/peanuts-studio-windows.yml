@@ -1,0 +1,96 @@
+# Build a real Windows x64 Peanuts Studio GUI executable. The archive contains
+# only the Qt desktop frontend, not copyrighted games/firmware/keys or native APKs.
+name: Peanuts Studio Windows GUI
+on:
+  pull_request:
+    paths:
+      - 'peanuts/desktop/**'
+      - 'peanuts/scripts/peanuts-studio.bat'
+      - '.github/workflows/peanuts-studio-windows.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'peanuts/desktop/**'
+      - '.github/workflows/peanuts-studio-windows.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-gui:
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.14'
+      - name: Install Qt and PyInstaller
+        shell: pwsh
+        run: python -m pip install --disable-pip-version-check -r peanuts/desktop/requirements-build.txt
+      - name: Python and offscreen desktop smoke tests
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PEANUTS_REPO: ${{ github.workspace }}
+        run: |
+          python -m compileall -q peanuts/desktop
+          python peanuts/desktop/test_studio.py
+          if ($LASTEXITCODE -ne 0) { throw 'Studio tests failed' }
+          python peanuts/desktop/app.py --smoke
+          if ($LASTEXITCODE -ne 0) { throw 'Studio startup failed' }
+      - name: Capture first-run desktop screenshot
+        shell: pwsh
+        env:
+          # Native Windows Qt backend supplies real font rendering for the preview.
+          # Qt's offscreen Windows plugin produced tofu glyphs despite passing smoke tests.
+          QT_QPA_PLATFORM: windows
+          PEANUTS_REPO: ${{ github.workspace }}
+        run: |
+          python peanuts/desktop/app.py --preview PeanutsStudio-preview.png
+          if ($LASTEXITCODE -ne 0) { throw 'Studio dashboard capture failed' }
+          python peanuts/desktop/app.py --preview-tools PeanutsStudio-tools.png
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency manager capture failed' }
+          python peanuts/desktop/app.py --preview-dialog PeanutsStudio-dialog.png
+          if ($LASTEXITCODE -ne 0) { throw 'Confirmation dialog capture failed' }
+          python peanuts/desktop/app.py --preview-shaders PeanutsStudio-shader-progress.png
+          if ($LASTEXITCODE -ne 0) { throw 'Compact shader progress capture failed' }
+          python peanuts/desktop/app.py --preview-transfer PeanutsStudio-adb-transfer.png
+          if ($LASTEXITCODE -ne 0) { throw 'Live ADB transfer preview failed' }
+          foreach ($name in @("PeanutsStudio-preview.png", "PeanutsStudio-tools.png", "PeanutsStudio-dialog.png", "PeanutsStudio-shader-progress.png", "PeanutsStudio-adb-transfer.png")) {
+            if (!(Test-Path $name)) { throw "Required screenshot missing: $name" }
+          }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: PeanutsStudio-UI-Preview
+          path: |
+            PeanutsStudio-preview.png
+            PeanutsStudio-tools.png
+            PeanutsStudio-dialog.png
+            PeanutsStudio-shader-progress.png
+            PeanutsStudio-adb-transfer.png
+          if-no-files-found: error
+          retention-days: 14
+      - name: Package Windows executable
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name PeanutsStudio --paths peanuts/desktop peanuts/desktop/app.py
+          if ($LASTEXITCODE -ne 0) { throw 'PyInstaller build failed' }
+          if (!(Test-Path dist/PeanutsStudio.exe)) { throw 'Windows executable was not produced' }
+      - name: Verify packaged executable initializes Qt
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PEANUTS_REPO: ${{ github.workspace }}
+        run: |
+          # A --windowed .exe does not reliably update PowerShell's LASTEXITCODE.
+          # Python subprocess waits for the GUI process and propagates its true exit code.
+          python -c "import subprocess,sys; p=subprocess.run(['dist/PeanutsStudio.exe','--smoke'],timeout=45); sys.exit(p.returncode)"
+          if ($LASTEXITCODE -ne 0) { throw "Packaged Studio failed to start: $LASTEXITCODE" }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: PeanutsStudio-Windows-x64
+          path: dist/PeanutsStudio.exe
+          if-no-files-found: error
+          retention-days: 14

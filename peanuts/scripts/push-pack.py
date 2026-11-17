@@ -46,22 +46,53 @@ def devices():
     return [l.split('\t')[0] for l in r.stdout.splitlines()[1:] if l.strip().endswith('\tdevice')]
 
 
-def adb(serial, args, dry):
-    cmd = ['adb', '-s', serial, *args]
-    print('+ ' + shlex.join(cmd), flush=True)
-    if dry: return
-    try: subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e: die(f'{shlex.join(cmd)} failed with exit code {e.returncode}')
+def adb(serial, args, dry, meter=None, size=0, is_dir=False):
+    import os
+    executable = os.environ.get('PEANUTS_ADB') or 'adb'
+    cmd = [executable, '-s', serial, *args]
+    if dry:
+        print('+ ' + shlex.join(cmd), flush=True)
+        return
+    try:
+        if meter is not None and args and args[0] == 'push':
+            from transfer_progress import run_adb_push
+            run_adb_push(cmd, serial, args[-1], is_dir, meter, size)
+        else:
+            print('+ ' + shlex.join(cmd), flush=True)
+            subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        die(f'{shlex.join(cmd)} failed with exit code {e.returncode}')
 
 
-def push_dir(serial, local, remote, dry):
+def push_dir(serial, local, remote, dry, meter=None, size=0):
     """local folder -> the device path remote (its parent made first); the copy goes to remote.tmp, then replaces remote in one shell call"""
     device_path(remote); tmp = remote + '.tmp'
     adb(serial, ['shell', shlex.join(['mkdir', '-p', posixpath.dirname(remote)])], dry)
     adb(serial, ['shell', shlex.join(['rm', '-rf', tmp])], dry)
-    adb(serial, ['push', str(local), tmp], dry)
+    adb(serial, ['push', str(local), tmp], dry, meter=meter, size=size, is_dir=True)
     adb(serial, ['shell', shlex.join(['find', tmp, '-name', '._*', '-type', 'f', '-delete'])], dry)   # macOS's AppleDouble files of an exFAT/FAT drive: not the pack's
     adb(serial, ['shell', shlex.join(['rm', '-rf', remote]) + ' && ' + shlex.join(['mv', tmp, remote])], dry)
+
+
+def payload_sizes(pack, game=None, version=None):
+    """Expected file bytes for the existing push sequence (never reads file data)."""
+    from transfer_progress import file_tree_bytes
+    sizes = {'pack': file_tree_bytes(pack)}
+    if game and game.suffix.lower() == '.nup':
+        sizes['game'] = game.stat().st_size
+        png = game.with_suffix('.png')
+        if png.is_file() and png.stat().st_size > 0:
+            sizes['icon'] = png.stat().st_size
+    elif game:
+        base = game / 'base' / 'exefs'
+        sizes['base'] = file_tree_bytes(base) if base.is_dir() else 0
+        versions = sorted((d.name for d in (game / 'updates').glob('*') if d.is_dir() and d.name.isdigit()), key=int) if (game / 'updates').is_dir() else []
+        chosen = version or (versions[-1] if versions else None)
+        if chosen and (game / 'updates' / chosen).is_dir():
+            sizes['update'] = file_tree_bytes(game / 'updates' / chosen)
+        if (game / 'dlc').is_dir():
+            sizes['dlc'] = file_tree_bytes(game / 'dlc')
+    return sizes
 
 
 def main(argv=None):
@@ -92,9 +123,17 @@ def main(argv=None):
         elif not devs: die('no device in adb devices: connect the phone with USB debugging on, or pass --serial')
         else: die('several devices in adb devices: pass --serial, one of ' + ', '.join(devs))
     print(f'title {title}, device {serial}, to {dest}')
+    meter = None
+    sizes = {}
+    if not a.dry_run:
+        # All stages are weighted by their actual local source byte counts,
+        # including the game NUP. This avoids "100%" when only the pack is done.
+        from transfer_progress import Meter
+        sizes = payload_sizes(pack, Path(a.game).expanduser() if a.game else None, a.version)
+        meter = Meter(sum(sizes.values()))
 
     work = f'{dest}/{title}-work'
-    push_dir(serial, pack, f'{work}/android-pack', a.dry_run)
+    push_dir(serial, pack, f'{work}/android-pack', a.dry_run, meter=meter, size=sizes.get('pack', 0))
     adb(serial, ['shell', shlex.join(['ls', f'{work}/android-pack/pack.tsv'])], a.dry_run)
     print(f'pushed: {work}/android-pack (the app reads it there)')
 
@@ -103,27 +142,30 @@ def main(argv=None):
         if not nup.is_file(): die(f'{nup} is not a file')
         remote = device_path(f'{dest}/{nup.name}', 'the .nup on the device', 2)
         adb(serial, ['shell', shlex.join(['rm', '-f', remote + '.tmp'])], a.dry_run)
-        adb(serial, ['push', str(nup), remote + '.tmp'], a.dry_run)
+        adb(serial, ['push', str(nup), remote + '.tmp'], a.dry_run, meter=meter, size=sizes.get('game', 0))
         adb(serial, ['shell', shlex.join(['mv', '-f', remote + '.tmp', remote])], a.dry_run)
         print(f'pushed the game to {remote}')
         png = nup.with_suffix('.png')   # the icon peanuts_build.py wrote beside the .nup: the app shows it from beside the .nup on the device
         if png.is_file() and png.stat().st_size > 0:
-            adb(serial, ['push', str(png), remote[:-4] + '.png'], a.dry_run)
+            adb(serial, ['push', str(png), remote[:-4] + '.png'], a.dry_run, meter=meter, size=sizes.get('icon', 0))
             print(f'pushed the icon to {remote[:-4]}.png')
     elif a.game:
         game = Path(a.game).expanduser().resolve()
         if not (game / 'base' / 'exefs').is_dir(): die(f'{game} has no base/exefs: give the game folder the dump made')
         gdev = device_path(f'{dest}/{game.name}', 'the game folder on the device', 2)
-        push_dir(serial, game / 'base' / 'exefs', f'{gdev}/base/exefs', a.dry_run)
+        push_dir(serial, game / 'base' / 'exefs', f'{gdev}/base/exefs', a.dry_run, meter=meter, size=sizes.get('base', 0))
         versions = sorted((d.name for d in (game / 'updates').glob('*') if d.is_dir() and d.name.isdigit()), key=int) if (game / 'updates').is_dir() else []
         ver = a.version or (versions[-1] if versions else None)
         if ver:
             if not (game / 'updates' / ver).is_dir(): die(f'{game}/updates/{ver} is not there (updates: {", ".join(versions) or "none"})')
-            push_dir(serial, game / 'updates' / ver, f'{gdev}/updates/{ver}', a.dry_run)
+            push_dir(serial, game / 'updates' / ver, f'{gdev}/updates/{ver}', a.dry_run, meter=meter, size=sizes.get('update', 0))
         else: print('no update in updates/: none copied')
-        if (game / 'dlc').is_dir(): push_dir(serial, game / 'dlc', f'{gdev}/dlc', a.dry_run)
+        if (game / 'dlc').is_dir(): push_dir(serial, game / 'dlc', f'{gdev}/dlc', a.dry_run, meter=meter, size=sizes.get('dlc', 0))
         else: print('no dlc/ folder: none copied')
         print(f'pushed the game parts to {gdev}/ (base/romfs stays on this computer)')
+
+    if meter is not None:
+        meter.finish()
 
 
 if __name__ == '__main__':

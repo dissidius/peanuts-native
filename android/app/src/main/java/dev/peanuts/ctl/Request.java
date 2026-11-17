@@ -130,6 +130,7 @@ public final class Request {
             case "companion": {
                 String a = action();
                 titleId(!a.equals("list"));
+                if (a.equals("list")) flag("all");  // optional read-only full catalog for the Studio
                 if (a.equals("remove") && !on("confirm")) throw new Bad("needs_confirm", "companion remove deletes the game's companion package: add -e confirm true");
                 break;
             }

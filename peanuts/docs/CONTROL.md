@@ -79,6 +79,7 @@ rest of the file.
 | `screens_off` | `-e cmd screens_off -e on true` | The black cover while a build runs; `-e on false` lifts it |
 | `set` | `-e cmd set -e key fps_cap -e value 30 -e title_id 0100F2C0115B6000` | One of the settings below, for every game or, with `title_id`, for one |
 | `companion` | `-e cmd companion -e do list` | The catalog against the library: one row a game in `data.companions` (below). With `title_id`, that game alone |
+| | `-e cmd companion -e do list -e all true` | Include catalog entries whose games are not in the library yet (`built=false`; installation is unavailable until the game has a pack). This is read-only. |
 | | `-e cmd companion -e do install -e title_id 0100F2C0115B6000` | The catalog's newest companion for the game, downloaded and checked as the catalog screen does. One that is installed and older is replaced |
 | | `-e cmd companion -e do update -e title_id 0100F2C0115B6000` | The same, refused (`not_installed`) when the game has none |
 | | `-e cmd companion -e do remove -e title_id 0100F2C0115B6000 -e confirm true` | Deletes the game's companion package. The game and its saves stay |
@@ -144,6 +145,7 @@ with `reimport`, or with `job` `do=try_anyway` to build without those shaders.
 | `upscaler` | `nearest`, `bilinear`, `fsr1`, `native`, `sgsr1` (one game: also `default`) | yes; not for a game on the DLSS stand-in or with Resolution presets |
 | `fps_cap` | `default`, `own`, `60`, `30`, `20`, `15`; a game with the frame limit list: `60`, `45`, `40`, `30`, `20`, `default` | yes; not for a game that picks its own rate |
 | `overlay` | `on`, `off` | no |
+| `touch_skin` | `switch`, `dualsense` | no; applies on next game start |
 | `keep_screen_on` | `on`, `off` (Settings › System › Keep the screen on while preparing) | no |
 
 A value outside the list is `bad_value`, another key `unknown_key`, a row the game does not have

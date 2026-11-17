@@ -63,14 +63,14 @@ class Build(unittest.TestCase):
             with self.assertRaises(SystemExit): pb.check_device_steps(app, 'Game')
             pb.check_device_steps(app, 'Game', {'DM_UE_DECODE': ''}) if marker == '/ue_shaders/' else None   # the Unreal step done here: not refused
 
-    def decode_case(self, rows, env=None, linux=True, unoodle=('/w/unoodle', ''), nxaes=('/w/pymod', '')):
+    def decode_case(self, rows, env=None, linux=True, windows=False, unoodle=('/w/unoodle', ''), nxaes=('/w/pymod', '')):
         """pc_decode for the made-up profiles {title ID: a shader_map.tsv row} with the builds stubbed -> {title ID: its settings, or the refusal's text}"""
         keep = {k: os.environ.pop(k, None) for k in ('DM_OODLE_OOZ', 'DM_OODLE_HOST', 'DM_OODLE_MODULES', 'DM_UE_SHADERS', 'PYTHONPATH')}
-        real = pb.REPO, pb.LINUX, pb.build_unoodle, pb.build_nxaes, pb.PC_DECODE
+        real = pb.REPO, pb.LINUX, pb.WINDOWS, pb.build_unoodle, pb.build_nxaes, pb.PC_DECODE
         out = {}
         try:
             with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
-                pb.REPO, pb.LINUX, pb.build_unoodle, pb.build_nxaes = Path(d), linux, lambda: unoodle, lambda: nxaes
+                pb.REPO, pb.LINUX, pb.WINDOWS, pb.build_unoodle, pb.build_nxaes = Path(d), linux, windows, lambda: unoodle, lambda: nxaes
                 pb.PC_DECODE = {'0100000000000001': True, '0100000000000002': True, '0100000000000003': False}
                 os.environ.update(env or {})
                 for app, row in rows.items():
@@ -78,7 +78,7 @@ class Build(unittest.TestCase):
                     try: out[app] = pb.pc_decode(app, 'Game')
                     except SystemExit as e: out[app] = str(e)
         finally:
-            pb.REPO, pb.LINUX, pb.build_unoodle, pb.build_nxaes, pb.PC_DECODE = real
+            pb.REPO, pb.LINUX, pb.WINDOWS, pb.build_unoodle, pb.build_nxaes, pb.PC_DECODE = real
             for k, v in keep.items():
                 os.environ.pop(k, None)
                 if v is not None: os.environ[k] = v
@@ -94,6 +94,14 @@ class Build(unittest.TestCase):
         self.assertEqual(got['0100000000000002'], {'DM_OODLE_OOZ': '/w/unoodle', 'PYTHONPATH': '/w/pymod', 'DM_UE_DECODE': ''})
         self.assertEqual(got['0100000000000003'], {'PYTHONPATH': '/w/pymod', 'DM_UE_DECODE': ''})   # an Unreal game without Oodle streams: no worker
         self.assertEqual(got['0100000000000004'], {})
+
+    def test_pc_decode_windows(self):
+        """Windows uses the same strictly profiled decode path, not a silent fallback."""
+        got = self.decode_case(self.ROWS, linux=False, windows=True)
+        self.assertEqual(got['0100000000000001'], {'DM_OODLE_OOZ': '/w/unoodle'})
+        self.assertEqual(got['0100000000000002'], {'DM_OODLE_OOZ': '/w/unoodle',
+                                                    'PYTHONPATH': '/w/pymod', 'DM_UE_DECODE': ''})
+        self.assertEqual(got['0100000000000003'], {'PYTHONPATH': '/w/pymod', 'DM_UE_DECODE': ''})
 
     def test_pc_decode_not_available(self):
         """Not Linux: nothing changes. No worker: the Oodle game stops before the import, the Unreal one is left to check_device_steps' refusal. No _nxaes: the same"""
@@ -258,6 +266,71 @@ class Push(unittest.TestCase):
             cmds = self.dry(str(pack), '--game', str(nup), '--dest', '/sdcard/Peanut Roms/Game')
         self.assertTrue(any(c.startswith('adb -s S push ') and c.endswith(f"'/sdcard/Peanut Roms/Game/Game [{TITLE}][v0].nup.tmp'") for c in cmds), cmds)
         self.assertTrue(any(c.startswith('adb -s S push ') and c.endswith(f"'/sdcard/Peanut Roms/Game/Game [{TITLE}][v0].png'") for c in cmds), cmds)
+
+
+class AdbTransferProgress(unittest.TestCase):
+    """Synthetic transfer snapshots; no game, device or ADB required."""
+
+    def test_two_stage_transfer_totals_speed_and_eta(self):
+        import json
+        tp = load('transfer_progress_test', 'transfer_progress.py')
+        events = []
+        now = [0]
+        meter = tp.Meter(1500, output=lambda message, flush: events.append(json.loads(message.split(chr(9), 1)[1])),
+                         clock=lambda: now[0])
+        meter.begin('Shader pack', 500)
+        now[0] = 2
+        meter.observe(250, 'device')
+        self.assertEqual(events[-1]['done'], 250)
+        self.assertEqual(events[-1]['percent'], 17)
+        self.assertEqual(events[-1]['eta_seconds'], 10)
+        meter.completed()
+        meter.begin('Game file', 1000)
+        now[0] = 4
+        meter.observe(500, 'adb')
+        self.assertEqual(events[-1]['done'], 1000)
+        self.assertEqual(events[-1]['percent'], 67)
+        self.assertEqual(events[-1]['source'], 'adb')
+        meter.completed()
+        meter.finish()
+        self.assertEqual(events[-1]['percent'], 100)
+        self.assertEqual(events[-1]['phase'], 'Transfer complete')
+
+    def test_sizes_include_nup_and_optional_png_without_reading_contents(self):
+        import sys
+        sys.path.insert(0, str(SCRIPTS))
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                pack = Path(d, TITLE + '-work', 'android-pack')
+                pack.mkdir(parents=True)
+                (pack / 'pack.tsv').write_text('title_id\\t' + TITLE + '\\n')
+                (pack / 'shader.lib').write_bytes(b'x' * 32)
+                game = Path(d, 'Test.nup')
+                game.write_bytes(b'y' * 75)
+                game.with_suffix('.png').write_bytes(b'z' * 10)
+                sizes = pp.payload_sizes(pack, game)
+                self.assertEqual(sizes['pack'], 32 + (pack / 'pack.tsv').stat().st_size)
+                self.assertEqual(sizes['game'], 75)
+                self.assertEqual(sizes['icon'], 10)
+        finally:
+            sys.path.remove(str(SCRIPTS))
+
+    def test_adb_progress_token_parsing_and_stage_atomic_completion(self):
+        tp = load('transfer_progress_test_command', 'transfer_progress.py')
+        import json
+        with tempfile.TemporaryDirectory() as d:
+            stage = Path(d, 'fake.nup')
+            stage.write_bytes(b'x')
+            output = []
+            meter = tp.Meter(1000, output=lambda message, flush: output.append(json.loads(message.split(chr(9), 1)[1])))
+            code = ('import sys;'
+                    'sys.stdout.write("[ 23%] fake.nup\\r[ 88%] fake.nup\\r1 file pushed\\n");'
+                    'sys.stdout.flush()')
+            tp.run_adb_push([sys.executable, '-u', '-c', code], 'SERIAL', '/sdcard/fake.nup.tmp',
+                            False, meter, 1000)
+            self.assertEqual(output[-1]['done'], 1000)
+            self.assertEqual(output[-1]['source'], 'complete')
+            self.assertTrue(any(e['source'] == 'adb' and e['percent'] >= 23 for e in output))
 
 
 class Syntax(unittest.TestCase):

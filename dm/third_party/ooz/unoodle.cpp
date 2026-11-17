@@ -17,8 +17,15 @@
 #include <stdint.h>
 #include <signal.h>
 #include <time.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#include <fcntl.h>
+#include <process.h>
+#else
 #include <unistd.h>
 #include <sys/mman.h>
+#endif
 
 typedef unsigned char byte;
 int Kraken_Decompress(const byte *src, size_t src_len, byte *dst, size_t dst_len);   // kraken.cpp
@@ -36,26 +43,57 @@ static const uint64_t LIMIT = 1ull << 30;      // per stream: kraken.cpp keeps o
 // A buffer that ends, after its slack, at a page without access: going further stops the process instead of touching other memory
 struct Arena { byte *base; size_t cap; };
 static byte *arena_end(Arena *a, size_t n) {
-  size_t page = (size_t)sysconf(_SC_PAGESIZE), need = (n + SLACK + page - 1) / page * page;
+#ifdef _WIN32
+  SYSTEM_INFO si; GetSystemInfo(&si);
+  size_t page = si.dwPageSize;
+#else
+  size_t page = (size_t)sysconf(_SC_PAGESIZE);
+#endif
+  size_t need = (n + SLACK + page - 1) / page * page;
   if (need > a->cap) {
+#ifdef _WIN32
+    if (a->base) VirtualFree(a->base, 0, MEM_RELEASE);
+#else
     if (a->base) munmap(a->base, a->cap + page);
+#endif
     size_t cap = need < (1u << 22) ? (1u << 22) : need * 2;
+#ifdef _WIN32
+    byte *p = (byte *)VirtualAlloc(NULL, cap + page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    DWORD old = 0;
+    if (!p || !VirtualProtect(p + cap, page, PAGE_NOACCESS, &old)) {
+      if (p) VirtualFree(p, 0, MEM_RELEASE);
+      a->base = NULL; a->cap = 0; return NULL;
+    }
+#else
     byte *p = (byte *)mmap(NULL, cap + page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (p == (byte *)MAP_FAILED || mprotect(p + cap, page, PROT_NONE)) { a->base = NULL; a->cap = 0; return NULL; }
+#endif
     a->base = p; a->cap = cap;
   }
-  return a->base + a->cap - SLACK - n;         // the n bytes, then the slack, then the guard page
+  return a->base + a->cap - SLACK - n;
 }
 
 static uint64_t g_stream;
 static void fault(int) {
   char m[96]; int n = snprintf(m, sizeof m, "unoodle: stream %llu: the decoder left its buffers (damaged or unsupported data)\n", (unsigned long long)g_stream);
+#ifdef _WIN32
+  if (_write(2, m, n) < 0) {}
+  _exit(3);
+#else
   if (write(2, m, n) < 0) {}
   _exit(3);
+#endif
 }
 
 static bool get(void *p, size_t n) { return fread(p, 1, n, stdin) == n; }
-static double now() { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + t.tv_nsec * 1e-9; }
+static double now() {
+#ifdef _WIN32
+  LARGE_INTEGER t, hz; QueryPerformanceCounter(&t); QueryPerformanceFrequency(&hz);
+  return (double)t.QuadPart / (double)hz.QuadPart;
+#else
+  struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + t.tv_nsec * 1e-9;
+#endif
+}
 
 // The decoder type of a stream's first block header: byte 0 = 0x8C / 0xCC (stored whole), byte 1 = the type; -1 for anything else
 static int stream_type(const byte *s, size_t n) {
@@ -68,7 +106,13 @@ static const char *type_name(int t) {
 }
 
 int main() {
+#ifdef _WIN32
+  _setmode(_fileno(stdin), _O_BINARY);
+  _setmode(_fileno(stdout), _O_BINARY);
+  signal(SIGSEGV, fault);  // an unhandled Win32 access violation also kills the worker (fail closed)
+#else
   signal(SIGSEGV, fault); signal(SIGBUS, fault);
+#endif
   Arena in = {NULL, 0}, out = {NULL, 0};
   struct { uint64_t ok, bad, cbytes, rbytes; double s; } st[16]; memset(st, 0, sizeof st);
   uint64_t h[2];
@@ -96,7 +140,12 @@ int main() {
   if (sf && g_stream) {
     FILE *f = fopen(sf, "a");
     if (f) {
-      char line[2048]; int n = snprintf(line, sizeof line, "pid=%d streams=%llu", (int)getpid(), (unsigned long long)g_stream);
+#ifdef _WIN32
+      int pid = _getpid();
+#else
+      int pid = getpid();
+#endif
+      char line[2048]; int n = snprintf(line, sizeof line, "pid=%d streams=%llu", pid, (unsigned long long)g_stream);
       for (int k = 0; k < 16; k++)
         if (st[k].ok || st[k].bad)
           n += snprintf(line + n, sizeof line - n, " | type=%d(%s) ok=%llu failed=%llu in=%llu out=%llu seconds=%.6f", k == 15 ? -1 : k, type_name(k == 15 ? -1 : k),

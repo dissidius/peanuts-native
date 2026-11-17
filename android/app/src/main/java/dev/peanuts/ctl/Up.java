@@ -229,6 +229,7 @@ final class Up {
             case "fps_cap":
                 if (ch.perGame) call(k("Prefs"), null, "fpsCap", own, c, titleId, ch.value); else call(k("Prefs"), null, "fpsCap", global, c, ch.value);
                 break;
+            case "touch_skin": call(k("TouchControls"), null, "skin", global, c, ch.value); break;
             case "overlay": call(k("Prefs"), null, "overlay", new Class<?>[] {Context.class, boolean.class}, c, ch.value); break;
             case "keep_screen_on": call(k("Prefs"), null, "keepScreenPreparing", new Class<?>[] {Context.class, boolean.class}, c, ch.value); break;
             default: throw new NoSuchMethodException(ch.key);

@@ -236,7 +236,7 @@ STEP_MARKERS = (
 )
 
 
-# The games whose Oodle or Unreal shader step this computer does itself (Linux only), each one checked on a PC against its profile's shader keys
+# The games whose Oodle or Unreal shader step this computer does itself (Linux/Windows x86-64), each one checked on a PC against its profile's shader keys
 # (dm/third_party/ooz/README.md "Checked"). True: it has Oodle streams, which the unoodle worker decodes; False: an Unreal game whose archives need no Oodle decoder.
 PC_DECODE = {
     '01001F5010DFA000': True,    # Pokémon Legends: Arceus (GFPAK entries, Oodle Kraken)
@@ -261,25 +261,37 @@ def stale(out, srcs):
 
 
 def build_unoodle():
-    """-> (peanuts/.build/ooz/unoodle, '') built by dm/third_party/ooz/build.sh when it is missing or older than its sources, or (None, why this computer has none)"""
-    if not LINUX or platform.machine().lower() not in ('x86_64', 'amd64'):
-        return None, ('the Oodle worker (dm/third_party/ooz) is built on x86-64 Linux only: its decoder uses x86 SSE2 intrinsics, '
-                      f'and this is {platform.machine() or "an unknown processor"} on {sys.platform}')
-    exe = OOZ_BUILD / 'unoodle'
-    if not stale(exe, [OOZ_SRC / f for f in ('kraken.cpp', 'stdafx.h', 'unoodle.cpp', 'ooz-port.patch', 'ooz-guards.patch', 'build.sh')]): return exe, ''
-    cxx = os.environ.get('CXX') or next((c for c in ('g++', 'clang++', 'c++') if shutil.which(c)), None)
-    if not cxx: return None, 'the Oodle worker (dm/third_party/ooz) needs a C++ compiler (g++ or clang++) on PATH'
-    if not shutil.which('patch'): return None, 'the Oodle worker (dm/third_party/ooz) needs the patch program on PATH'
+    """Build the independent GPL Oodle pipe worker for validated x86-64 PC profiles."""
+    if platform.machine().lower() not in ('x86_64', 'amd64') or not (LINUX or WINDOWS):
+        return None, 'the Oodle worker needs an x86-64 Linux or Windows PC'
+    exe = OOZ_BUILD / ('unoodle.exe' if WINDOWS else 'unoodle')
+    srcs = [OOZ_SRC / f for f in ('kraken.cpp', 'stdafx.h', 'unoodle.cpp', 'ooz-port.patch', 'ooz-guards.patch', 'build.sh')]
+    if WINDOWS: srcs.append(REPO / 'peanuts/scripts/build_unoodle_windows.py')
+    if not stale(exe, srcs): return exe, ''
     say(f'building the Oodle worker into {OOZ_BUILD}')
-    rc, _ = run(['sh', str(OOZ_SRC / 'build.sh'), str(exe), cxx], False, 'the Oodle worker build')
-    if rc or not exe.is_file(): return None, f'the Oodle worker build failed (exit code {rc}; its messages are above)'
+    if WINDOWS:
+        rc, _ = run([sys.executable, str(REPO / 'peanuts/scripts/build_unoodle_windows.py'), str(exe)], False, 'the Windows Oodle worker')
+    else:
+        cxx = os.environ.get('CXX') or next((c for c in ('g++', 'clang++', 'c++') if shutil.which(c)), None)
+        if not cxx: return None, 'the Oodle worker needs g++ or clang++ on PATH'
+        if not shutil.which('patch'): return None, 'the Oodle worker needs patch on PATH'
+        rc, _ = run(['sh', str(OOZ_SRC / 'build.sh'), str(exe), cxx], False, 'the Oodle worker build')
+    if rc or not exe.is_file(): return None, f'the Oodle worker build failed (exit code {rc}; see messages above)'
     return exe, ''
 
 
 def build_nxaes():
     """-> (peanuts/.build/pymod, '') holding _nxaes for this Python (uepak.py reads an Unreal pak's encrypted index with it off the Mac), built from
     dm/peanuts/pack_worker/nxaes.c when it is missing or older than its source, or (None, why this computer has none)"""
-    if not LINUX: return None, 'the _nxaes module (dm/peanuts/pack_worker/nxaes.c) is built on Linux only'
+    if WINDOWS:
+        shim = REPO / 'peanuts/scripts/windows_aes'
+        try:
+            from Crypto.Cipher import AES
+        except ImportError:
+            return None, 'Windows Unreal decoding needs PyCryptodome: run scripts/bananative.bat setup again'
+        if not (shim / '_nxaes.py').is_file(): return None, 'Windows _nxaes adapter was not found'
+        return shim, ''
+    if not LINUX: return None, 'the _nxaes module needs Linux or Windows'
     inc, suffix = sysconfig.get_paths().get('include') or '', sysconfig.get_config_var('EXT_SUFFIX') or '.so'
     out = PYMOD_BUILD / ('_nxaes' + suffix)
     if not stale(out, [NXAES_SRC]): return PYMOD_BUILD, ''
@@ -301,7 +313,7 @@ def build_nxaes():
 def pc_decode(app, name=None):
     """What this computer does itself for a game whose shaders are Oodle-compressed or in Unreal archives -> the settings its pack step gets ({} = nothing: every
     other game, and whatever check_device_steps then refuses).
-      DM_OODLE_OOZ   the unoodle worker, for a PC_DECODE game with Oodle streams on Linux when the worker builds; one already set (your own worker) is used
+      DM_OODLE_OOZ   the unoodle worker, for a PC_DECODE game with Oodle streams on Linux/Windows when the worker builds; one already set (your own worker) is used
                      for any game. pack_android.py takes that decoder's output only when the split's shader keys are exactly the profile's.
       DM_UE_DECODE   for a game with /ue_shaders/ rows: the split decodes the Unreal archives itself, as the phone's does ('' here; main() names the folder);
                      with PYTHONPATH naming the folder of _nxaes.
@@ -309,7 +321,7 @@ def pc_decode(app, name=None):
     label = f'{name or app} ({app})'
     given = os.environ.get('DM_OODLE_OOZ')
     if given and not Path(given).expanduser().is_file(): die(f'DM_OODLE_OOZ names {given}, which is not a file')
-    if not given and not (LINUX and app in PC_DECODE): return {}
+    if not given and not ((LINUX or WINDOWS) and app in PC_DECODE): return {}
     ue = profile_has(app, '/ue_shaders/')
     env = {}
     if given:

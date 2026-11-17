@@ -24,6 +24,47 @@ On macOS and Linux the importer also needs zlib's headers (part of the Xcode com
 
 Set `NX_KEYS` to your `prod.keys`, or pass `--keys`. The default is `~/.switch/prod.keys`.
 
+### Windows PC: build on Windows, play on Android
+
+This is the **Android game pack** builder. It is not a Windows game runtime and it does not compile the Peanuts Native APK. Install the Peanuts Native APK on the phone separately; once Windows has produced the pack, you can transfer the result with `--push`.
+
+**One-time setup (native Windows, no WSL required for the PC packer):**
+
+1. Install [MSYS2](https://www.msys2.org/) to its normal `C:\\msys64` location. Open **MSYS2 UCRT64** and install the importer toolchain:
+
+   ```sh
+   pacman -Syu
+   pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-make mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-zlib
+   ```
+
+   If `pacman -Syu` asks you to restart the MSYS2 shell, reopen UCRT64 before the second command. The Windows batch builder automatically adds the standard UCRT64 `bin` to PATH if installed there. For a non-standard MSYS2 install, add its `ucrt64\\bin` to Windows PATH yourself.
+
+2. In **PowerShell** at the root of this checkout, run:
+
+   ```powershell
+   .\peanuts\scripts\windows-builder-check.ps1
+   ```
+
+   This compiles the **Windows** `nximport_cli.exe`, runs native C tests with synthetic data, runs the builder's Python tests, and checks/bootstrap-installs the packer environment (Python 3.14, .NET 10, shader tools). The first packer setup downloads packages from conda-forge; give it a folder on a drive with free space. This preflight does **not** require a game or console keys.
+
+3. Install Android SDK **platform-tools** on Windows and enable USB debugging on the phone. Check `adb devices`; the device must say `device`, not `unauthorized`.
+
+**Build and send a game (Command Prompt or PowerShell):**
+
+```bat
+peanuts\scripts\peanuts-build.bat "D:\\Dumps\\Game.nsp" "D:\\Dumps\\Update.nsp" --keys "D:\\Keys\\prod.keys" --push
+```
+
+Or for a game already in the project's `.nup` format:
+
+```bat
+peanuts\scripts\peanuts-build.bat "D:\\Dumps\\Game [01006BB00C6F0000][v131072].nup" --push
+```
+
+Without `--push`, the `.nup` and `<title ID>-work\\android-pack` stay on the computer. With it, the prepared pack and game go to the phone's `/sdcard/Peanut Roms` folder. Set **Settings → Library** in the Android Peanuts app to scan that directory.
+
+**Important limits:** The Windows path still needs testing with actual game dumps and Android playback. The synthetic preflight proves only that the Windows importer and builder utilities run. Games requiring GPU shader capture or special Unreal/Oodle decoding may still need the Android on-device build step; see [Games the builder refuses](#games-the-builder-refuses). Do not upload or commit your own keys, game files or generated packs.
+
 ### Linux
 
 Two ways to get the packer environment. Either way the importer needs cmake, gcc and zlib's headers, and `--push` needs `adb`.
@@ -75,9 +116,9 @@ Other inputs: a `.nup` (`... "Game [01006BB00C6F0000][v131072].nup" --push --des
 
 A game whose profile (`dm/games/<titleID>/shader_map.tsv`) has `/glslc_capture/` rows (shaders the game compiles with GLSLC at run time, for example Fire Emblem: Three Houses) or `/ue_shaders/` rows (Unreal shader archives, for example TRIANGLE STRATEGY) needs a step that boots the game or runs the phone's decoder. The builder stops before the import with a `[RED]` message and a non-zero exit code; use Build in the Peanuts app on the device, which runs that step there. If you already have the files, set `DM_GLSLC_CAPTURE` or `DM_UE_SHADERS` to the folder that holds them and the check is skipped.
 
-## Oodle and Unreal games a Linux PC builds itself
+## Oodle and Unreal games a Linux or Windows x64 PC builds itself
 
-On Linux the builder does that step itself for four games, each checked on a PC against its profile's shader keys:
+On Linux or Windows x64 the builder can perform that step itself for four games, each checked on a PC against its profile's shader keys:
 
 | Game | What the PC does | Checked |
 |---|---|---|
@@ -87,9 +128,9 @@ On Linux the builder does that step itself for four games, each checked on a PC 
 | DRAGON QUEST III HD-2D Remake (`01003E601E324000`) | reads its Unreal shader archives (LZ4, no Oodle) | 47,298 of 47,298 keys |
 
 - **`unoodle`** is a small worker built from the open-source ooz decoder in [`dm/third_party/ooz`](../../dm/third_party/ooz/README.md). It is GPL-3.0-or-later and a program of its own: the builder's tools start it and talk to it over a pipe (`DM_OODLE_OOZ`). It is for the PC builder only: it is not in the APK, not in the on-device build and not in any release file. Its licence as that folder's README records it: the decoder's source file carries a GPL-3.0-or-later notice, but the ooz project has no licence file, and its files without a notice that hold decoder code are left out. The builder compiles it into `peanuts/.build/ooz` the first time such a game is built. It needs x86-64, g++ or clang++, and the `patch` program.
-- The three Unreal games also need the `_nxaes` module (AES for the pak index), which the builder compiles for its own Python into `peanuts/.build/pymod`. It needs gcc or clang and Python's headers (`python3-dev` or `python3-devel`). The split then decodes the archives itself (`DM_UE_DECODE`, into `<TITLE ID>-work/android-shaders/ue_shaders`, reused while the game's paks are the same).
+- The three Unreal games also need `_nxaes` (AES for the pak index). On Linux the builder compiles it from source with Python headers. On Windows it uses the compatible `peanuts/scripts/windows_aes/_nxaes.py` adapter with PyCryptodome from the Windows packer environment. The split then decodes the archives itself (`DM_UE_DECODE`, into `<TITLE ID>-work/android-shaders/ue_shaders`, reused while the game's paks are the same).
 - **ooz is not the game's own decoder**, and an Oodle stream has no checksum. So the pack is made only if the shader keys that come out of the split are exactly the ones in the game's profile; each key is a hash of its shader's bytes. With one key missing or one key more the build stops with a `[RED]` message that names the ooz decoder, and nothing it decoded is used. The usual cause is game files of another version than the profile's; build on the device then.
-- Where the worker cannot be built (arm64, no compiler), the Unreal games are refused as above and Arceus stops before the import with the reason. On macOS and Windows nothing changes: these games are refused as before. Other games with Oodle-compressed files (for example Pokémon Legends: Z-A, Bayonetta 3) are not on the list, because their decode was not checked on a PC; they still stop at the shader split.
+- Where the worker cannot be built (arm64, no compiler), the Unreal games are refused as above and Arceus stops before the import with the reason. On macOS this automatic worker remains unavailable. On Windows the same four profiles are enabled, subject to Windows decoder validation and each game's shader key checks. Other games with Oodle-compressed files (for example Pokémon Legends: Z-A, Bayonetta 3) are not on the list, because their decode was not checked on a PC; they still stop at the shader split.
 - `DM_OODLE_OOZ` set by you (a worker you built with `dm/third_party/ooz/build.sh`) is used for any game, with the same key check.
 
 ## .NET
@@ -109,7 +150,7 @@ The shader translator needs .NET. The builder points the tools it starts at the 
 |---|---|
 | macOS | Tested end to end: Link's Awakening 1.1.0 from its `.nsp` files to an AYN Thor in 4 min 17 s (import 14 s, pack 3 min 37 s, push 26 s); the pack is the phone's byte for byte |
 | Linux | Tested end to end: Breath of the Wild 1.9.0 with both DLC from its `.nsp` files to an AYN Thor. Import (28.9 GiB, 87,848 files, `verify` ok) 31 min, rewrite and shader translation (19,592 shaders, all valid) and pack 45 min, push to the Thor's microSD 78 min, and the game boots from the pushed pack. Run on the distribution's Python 3.14 with a venv for `zbic`, gcc, cmake and .NET 10. The pack was not compared byte for byte with a phone-built one |
-| Windows | Written, not yet tested |
+| Windows | Importer and Python builder tests passed on Windows CI; game-data and actual Android playback unverified |
 
 A tester on Windows should run and report:
 

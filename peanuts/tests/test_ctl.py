@@ -135,6 +135,8 @@ class CtlTest(unittest.TestCase):
 
     def test_the_companion_command(self):   # no screen: the catalog is read and a package installed on the command's own thread
         self.assertEqual(self.request('cmd=companion', 'do=list'), 'ok companion null false null')
+        self.assertEqual(self.request('cmd=companion', 'do=list', 'all=true'), 'ok companion null false null')
+        self.assertEqual(self.request('cmd=companion', 'do=list', 'all=bad'), 'bad bad_args')
         self.assertEqual(self.request('cmd=companion', 'do=list', 'title_id=' + TITLE), 'ok companion null false ' + TITLE)
         self.assertEqual(self.request('cmd=companion', 'do=install', 'title_id=' + TITLE, 'id=c1'), 'ok companion c1 false ' + TITLE)
         self.assertEqual(self.request('cmd=companion', 'do=UPDATE', 'title_id=' + TITLE.lower()), 'ok companion null false ' + TITLE)
@@ -198,6 +200,10 @@ class CtlTest(unittest.TestCase):
         self.assertEqual(self.set('upscaler', 'dlss'), 'bad bad_value')
         self.assertEqual(self.set('overlay', 'off'), 'ok overlay false false now')
         self.assertEqual(self.set('keep_screen_on', 'on'), 'ok keep_screen_on false true now')
+        self.assertEqual(self.set('touch_skin', 'switch'), 'ok touch_skin false 0 next_start')
+        self.assertEqual(self.set('touch_skin', 'dualsense'), 'ok touch_skin false 1 next_start')
+        self.assertEqual(self.set('touch_skin', 'dualsense', own=True), 'bad bad_args')
+        self.assertEqual(self.set('touch_skin', 'xbox'), 'bad bad_value')
         self.assertEqual(self.set('overlay', 'on', own=True), 'bad bad_args')
         self.assertEqual(self.set('overlay', 'default'), 'bad bad_value')
 

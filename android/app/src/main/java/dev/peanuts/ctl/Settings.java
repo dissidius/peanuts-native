@@ -12,7 +12,7 @@ import java.util.Locale;
 public final class Settings {
     private Settings() {}
 
-    public static final List<String> KEYS = Arrays.asList("console_mode", "res_scale", "upscaler", "fps_cap", "overlay", "keep_screen_on");
+    public static final List<String> KEYS = Arrays.asList("console_mode", "res_scale", "upscaler", "fps_cap", "overlay", "keep_screen_on", "touch_skin");
     static final List<String> UPSCALERS = Arrays.asList("nearest", "bilinear", "fsr1", "native", "sgsr1");   // the order of the launcher's Upscaler list
     static final String[] SCALES = {"0.5", "0.75", "1", "1.25", "1.5", "2"};
     static final int[] QUARTERS = {2, 3, 4, 5, 6, 8};
@@ -67,6 +67,12 @@ public final class Settings {
                 StringBuilder all = new StringBuilder();
                 for (int c : offered) if (c != -1) all.append(all.length() > 0 ? ", " : "").append(c == 0 ? (pacedGame ? "60" : "own") : String.valueOf(c));
                 throw bad(k, all + " or default", v);
+            }
+            case "touch_skin": {
+                if (perGame) throw new Request.Bad("bad_args", "touch_skin is one setting for every game: give no title_id");
+                if (v.equals("switch")) return new Change(k, false, 0, "next_start");
+                if (v.equals("dualsense")) return new Change(k, false, 1, "next_start");
+                throw bad(k, "switch or dualsense", v);
             }
             case "overlay": case "keep_screen_on": {
                 if (perGame) throw new Request.Bad("bad_args", k + " is one setting for every game: give no title_id");
