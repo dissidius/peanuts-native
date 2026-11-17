@@ -657,6 +657,7 @@ class Studio(QMainWindow):
         self._task_output_fragment = ""
         self._task_raw_log = []
         self._progress_milestones = shader_progress.Milestones()
+        self._last_transfer_milestone = None
         self.task_label.setText(label)
         self.progress.setRange(0, 0)
         self.progress.show()
@@ -701,8 +702,65 @@ class Studio(QMainWindow):
         self.install_active = None
         self.warn("Could not start", message)
 
+    @staticmethod
+    def _transfer_size(amount):
+        n = max(0, int(amount))
+        for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+            if n < 1024 or unit == "TiB":
+                return (str(n) if unit == "B" else f"{n:.1f}") + " " + unit
+            n /= 1024
+
+    @staticmethod
+    def _transfer_eta(seconds):
+        if seconds is None:
+            return "calculating…"
+        secs = max(0, int(seconds))
+        if secs < 60:
+            return f"~{secs}s"
+        if secs < 3600:
+            return f"~{secs // 60}m {secs % 60}s"
+        return f"~{secs // 3600}h {(secs % 3600) // 60}m"
+
+    def _transfer_event(self, line):
+        if not line.startswith("PEANUTS_TRANSFER\\t".replace("\\t", "\t")):
+            return False
+        try:
+            info = json.loads(line.split("\t", 1)[1])
+            total = max(0, int(info["total"]))
+            done = max(0, min(total, int(info["done"])))
+            percent = max(0, min(100, int(info["percent"])))
+            rate = max(0.0, float(info["rate"]))
+            eta = info.get("eta_seconds")
+            phase = str(info["phase"])[:80]
+            if total == 0:
+                return True
+            self.progress.setRange(0, 100)
+            self.progress.setValue(percent)
+            self.progress.show()
+            speed = f"{rate / (1024 * 1024):.1f} MiB/s" if rate > 0 else "measuring speed"
+            eta_label = self._transfer_eta(eta)
+            source = str(info.get("source") or "pending")
+            if source == "pending":
+                eta_label += " (based on previous progress)" if done else " (waiting for ADB)"
+            detail = (f"{phase} · {percent}% · "
+                      f"{self._transfer_size(done)} / {self._transfer_size(total)}"
+                      f" · {speed} · ETA {eta_label}")
+            self.task_label.setText(detail)
+            self.task_label.setToolTip(detail)
+            milestone = percent // 5
+            signature = (phase, milestone)
+            if signature != getattr(self, "_last_transfer_milestone", None):
+                self._last_transfer_milestone = signature
+                self.write_log("[Transfer] " + detail)
+        except (ValueError, KeyError, TypeError, OverflowError, json.JSONDecodeError):
+            self.write_log("[Transfer] Malformed progress event ignored")
+        return True
+
     def _process_task_line(self, line):
         if not line.strip():
+            return
+        if self._transfer_event(line):
+            # Status-only machine data, not a console log line.
             return
         if self.keys.text():
             line = line.replace(self.keys.text(), "[local keys path]")
