@@ -115,7 +115,7 @@ jobs:
             -PnxApp=peanuts -PnxRelease=true -PnxLabel='Peanuts Native' -PnxGenericHost=true \
             "-PnxGames=$NX_GAMES_CSV" \
             "-PnxPackStage=$NX_PACK_STAGE" -PnxPackEngine=native \
-            -PnxVersion=0.1.3-dualsense "-PnxVersionCode=$NX_VERSION_CODE" --stacktrace
+            -PnxVersion=0.1.3 "-PnxVersionCode=$NX_VERSION_CODE" --stacktrace
           mkdir -p out
           APK=$(find build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -1)
           test -n "$APK" && test -s "$APK"
@@ -163,6 +163,8 @@ jobs:
           side_pkg=$("$AAPT" dump badging "$side" | sed -n '1p')
           [[ "$same_pkg" == *"name='dev.nxnative.android.peanuts'"* ]]
           [[ "$side_pkg" == *"name='dev.nxnative.android.peanutsds'"* ]]
+          [[ "$same_pkg" == *"versionName='0.1.3'"* ]]
+          [[ "$side_pkg" == *"versionName='0.1.3-dualsense'"* ]]
           [[ "$same_pkg" == *"versionCode='$NX_VERSION_CODE'"* ]]
           [[ "$side_pkg" == *"versionCode='$NX_VERSION_CODE'"* ]]
           echo "$same_pkg"
