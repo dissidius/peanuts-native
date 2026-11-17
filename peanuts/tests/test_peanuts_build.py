@@ -268,6 +268,69 @@ class Push(unittest.TestCase):
         self.assertTrue(any(c.startswith('adb -s S push ') and c.endswith(f"'/sdcard/Peanut Roms/Game/Game [{TITLE}][v0].png'") for c in cmds), cmds)
 
 
+class AdbTransferProgress(unittest.TestCase):
+    """Synthetic transfer snapshots; no game, device or ADB required."""
+
+    def test_two_stage_transfer_totals_speed_and_eta(self):
+        import json
+        tp = load('transfer_progress_test', 'transfer_progress.py')
+        events = []
+        now = [0]
+        meter = tp.Meter(1500, output=lambda message, flush: events.append(json.loads(message.split('\\t', 1)[1])),
+                         clock=lambda: now[0])
+        meter.begin('Shader pack', 500)
+        now[0] = 2
+        meter.observe(250, 'device')
+        self.assertEqual(events[-1]['done'], 250)
+        self.assertEqual(events[-1]['percent'], 17)
+        self.assertEqual(events[-1]['eta_seconds'], 10)
+        meter.completed()
+        meter.begin('Game file', 1000)
+        now[0] = 4
+        meter.observe(500, 'adb')
+        self.assertEqual(events[-1]['done'], 1000)
+        self.assertEqual(events[-1]['percent'], 67)
+        self.assertEqual(events[-1]['source'], 'adb')
+        meter.completed()
+        meter.finish()
+        self.assertEqual(events[-1]['percent'], 100)
+        self.assertEqual(events[-1]['phase'], 'Transfer complete')
+
+    def test_sizes_include_nup_and_optional_png_without_reading_contents(self):
+        import sys
+        sys.path.insert(0, str(SCRIPTS))
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                pack = self.pack(d)
+                (pack / 'shader.lib').write_bytes(b'x' * 32)
+                game = Path(d, 'Test.nup')
+                game.write_bytes(b'y' * 75)
+                game.with_suffix('.png').write_bytes(b'z' * 10)
+                sizes = pp.payload_sizes(pack, game)
+                self.assertEqual(sizes['pack'], 32 + (pack / 'pack.tsv').stat().st_size)
+                self.assertEqual(sizes['game'], 75)
+                self.assertEqual(sizes['icon'], 10)
+        finally:
+            sys.path.remove(str(SCRIPTS))
+
+    def test_adb_progress_token_parsing_and_stage_atomic_completion(self):
+        tp = load('transfer_progress_test_command', 'transfer_progress.py')
+        import json
+        with tempfile.TemporaryDirectory() as d:
+            stage = Path(d, 'fake.nup')
+            stage.write_bytes(b'x')
+            output = []
+            meter = tp.Meter(1000, output=lambda message, flush: output.append(json.loads(message.split('\\t', 1)[1])))
+            code = ('import sys;'
+                    'sys.stdout.write("[ 23%] fake.nup\\r[ 88%] fake.nup\\r1 file pushed\\n");'
+                    'sys.stdout.flush()')
+            tp.run_adb_push([sys.executable, '-u', '-c', code], 'SERIAL', '/sdcard/fake.nup.tmp',
+                            False, meter, 1000)
+            self.assertEqual(output[-1]['done'], 1000)
+            self.assertEqual(output[-1]['source'], 'complete')
+            self.assertTrue(any(e['source'] == 'adb' and e['percent'] >= 23 for e in output))
+
+
 class Syntax(unittest.TestCase):
     @unittest.skipIf(sys.version_info < (3, 12), 'the tokenizer splits f-strings into tokens from Python 3.12 on')
     def test_python39(self):
