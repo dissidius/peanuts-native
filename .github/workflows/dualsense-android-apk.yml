@@ -91,7 +91,9 @@ jobs:
             "-PnxPackStage=$NX_PACK_STAGE" -PnxPackEngine=native \
             -PnxVersion=0.1.3-dualsense -PnxVersionCode=14 --stacktrace
           mkdir -p out
-          cp build/outputs/apk/release/app-release.apk out/PeanutsNative-DualSense-same-package.apk
+          APK=$(find build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -1)
+          test -n "$APK" && test -s "$APK"
+          cp "$APK" out/PeanutsNative-DualSense-same-package.apk
       - name: Build side-by-side app (original stays installed)
         shell: bash
         run: |
@@ -102,7 +104,9 @@ jobs:
             -PnxGenericHost=true "-PnxGames=$NX_GAMES_CSV" \
             "-PnxPackStage=$NX_PACK_STAGE" -PnxPackEngine=native \
             -PnxVersion=0.1.3-dualsense -PnxVersionCode=14 --stacktrace
-          cp build/outputs/apk/release/app-release.apk out/PeanutsNative-DualSense-side-by-side.apk
+          APK=$(find build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -1)
+          test -n "$APK" && test -s "$APK"
+          cp "$APK" out/PeanutsNative-DualSense-side-by-side.apk
       - name: Check real native packer and profile payloads in APKs
         shell: bash
         run: |
