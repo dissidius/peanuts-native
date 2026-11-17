@@ -58,7 +58,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Compact shader progress capture failed' }
           python peanuts/desktop/app.py --preview-transfer PeanutsStudio-adb-transfer.png
           if ($LASTEXITCODE -ne 0) { throw 'Live ADB transfer preview failed' }
-          foreach ($name in @("PeanutsStudio-preview.png", "PeanutsStudio-tools.png", "PeanutsStudio-dialog.png", "PeanutsStudio-shader-progress.png, "PeanutsStudio-adb-transfer.png")) {
+          foreach ($name in @("PeanutsStudio-preview.png", "PeanutsStudio-tools.png", "PeanutsStudio-dialog.png", "PeanutsStudio-shader-progress.png", "PeanutsStudio-adb-transfer.png")) {
             if (!(Test-Path $name)) { throw "Required screenshot missing: $name" }
           }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
