@@ -42,13 +42,15 @@ jobs:
           curl -fL --retry 4 --connect-timeout 30 -o "$RUNNER_TEMP/upstream/PeanutsNative-0.1.4.apk" "$UPSTREAM_APK"
           printf '%s  %s\n' "$UPSTREAM_SHA256" "$RUNNER_TEMP/upstream/PeanutsNative-0.1.4.apk" | sha256sum -c -
           APK="$RUNNER_TEMP/upstream/PeanutsNative-0.1.4.apk"
-          for lib in libpython3.14.so libnxpack.so libzbicdec.so libdmsh_xlate.so libSPIRV-Tools-shared.so; do
+          for lib in libpython3.14.so libnxpack.so libzbicdec.so libcra.so libdmsh_xlate.so libSPIRV-Tools-shared.so; do
             unzip -p "$APK" "lib/arm64-v8a/$lib" > "$RUNNER_TEMP/real-stage/lib/$lib"
             test -s "$RUNNER_TEMP/real-stage/lib/$lib"
           done
           unzip -p "$APK" assets/pack/python.zip > "$RUNNER_TEMP/upstream/python.zip"
           unzip -q "$RUNNER_TEMP/upstream/python.zip" -d "$RUNNER_TEMP/real-stage/python"
           test -f "$RUNNER_TEMP/real-stage/python/lib/python3.14/os.py"
+          test -f "$RUNNER_TEMP/real-stage/python/lib/python3.14/site-packages/lz4/frame/__init__.py"
+          test -f "$RUNNER_TEMP/real-stage/python/lib/python3.14/site-packages/lz4/frame/_frame.cpython-314-aarch64-linux-android.so"
           python3 dm/gfx/tools/xlate_tree.py --check-lib "$RUNNER_TEMP/real-stage/lib/libdmsh_xlate.so"
           echo "NX_PACK_STAGE=$RUNNER_TEMP/real-stage" >> "$GITHUB_ENV"
       - name: Match official 0.1.4 game catalog
@@ -137,7 +139,7 @@ jobs:
           for apk in android/app/out/PeanutsNative-DualSense-*.apk; do
             echo "--- $apk"
             du -h "$apk"
-            for lib in libpython3.14.so libnxpack.so libzbicdec.so libdmsh_xlate.so libSPIRV-Tools-shared.so; do
+            for lib in libpython3.14.so libnxpack.so libzbicdec.so libcra.so libdmsh_xlate.so libSPIRV-Tools-shared.so; do
               unzip -Z1 "$apk" | grep -Fx "lib/arm64-v8a/$lib"
             done
             unzip -Z1 "$apk" | grep -Fx 'assets/pack/python.zip'
