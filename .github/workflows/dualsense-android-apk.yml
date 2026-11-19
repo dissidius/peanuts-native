@@ -42,13 +42,15 @@ jobs:
           curl -fL --retry 4 --connect-timeout 30 -o "$RUNNER_TEMP/upstream/PeanutsNative-0.1.5.apk" "$UPSTREAM_APK"
           printf '%s  %s\n' "$UPSTREAM_SHA256" "$RUNNER_TEMP/upstream/PeanutsNative-0.1.5.apk" | sha256sum -c -
           APK="$RUNNER_TEMP/upstream/PeanutsNative-0.1.5.apk"
-          for lib in libpython3.14.so libnxpack.so libzbicdec.so libdmsh_xlate.so libSPIRV-Tools-shared.so; do
+          for lib in libpython3.14.so libnxpack.so libzbicdec.so libcra.so libdmsh_xlate.so libSPIRV-Tools-shared.so; do
             unzip -p "$APK" "lib/arm64-v8a/$lib" > "$RUNNER_TEMP/real-stage/lib/$lib"
             test -s "$RUNNER_TEMP/real-stage/lib/$lib"
           done
           unzip -p "$APK" assets/pack/python.zip > "$RUNNER_TEMP/upstream/python.zip"
           unzip -q "$RUNNER_TEMP/upstream/python.zip" -d "$RUNNER_TEMP/real-stage/python"
           test -f "$RUNNER_TEMP/real-stage/python/lib/python3.14/os.py"
+          test -f "$RUNNER_TEMP/real-stage/python/lib/python3.14/site-packages/lz4/frame/__init__.py"
+          test -f "$RUNNER_TEMP/real-stage/python/lib/python3.14/site-packages/lz4/frame/_frame.cpython-314-aarch64-linux-android.so"
           python3 dm/gfx/tools/xlate_tree.py --check-lib "$RUNNER_TEMP/real-stage/lib/libdmsh_xlate.so"
           echo "NX_PACK_STAGE=$RUNNER_TEMP/real-stage" >> "$GITHUB_ENV"
       - name: Match official 0.1.5 game catalog
@@ -76,6 +78,25 @@ jobs:
             test -f "dm/games/$game/game.tsv" || { echo "::error::Missing profile: $game"; exit 1; }
           done < "$RUNNER_TEMP/config/games.txt"
           echo "NX_GAMES_CSV=$(paste -sd, "$RUNNER_TEMP/config/games.txt")" >> "$GITHUB_ENV"
+      - name: Restore official prewarm seeds (SHA-256 verified)
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$RUNNER_TEMP/upstream/PeanutsNative-0.1.5.apk"
+          SEEDS="$RUNNER_TEMP/release-prewarm-seeds"
+          mkdir -p "$SEEDS"
+          total=0
+          while read -r game digest; do
+            [ -n "$game" ] || continue
+            if grep -qx "$game" "$RUNNER_TEMP/config/games.txt"; then
+              unzip -p "$APK" "assets/profiles/$game.seed" > "$SEEDS/$game.seed"
+              test -s "$SEEDS/$game.seed" || { echo "::error::Missing release prewarm seed for $game"; exit 1; }
+              echo "$digest  $SEEDS/$game.seed" | sha256sum -c -
+              total=$((total+1))
+            fi
+          done < peanuts/prewarm-sha256.tsv
+          echo "Verified $total upstream release prewarm seeds"
+          echo "PN_PREWARM_SEEDS=$SEEDS" >> "$GITHUB_ENV"
       - name: Require persistent, private Android signing key
         shell: bash
         env:
@@ -137,7 +158,7 @@ jobs:
           for apk in android/app/out/PeanutsNative-DualSense-*.apk; do
             echo "--- $apk"
             du -h "$apk"
-            for lib in libpython3.14.so libnxpack.so libzbicdec.so libdmsh_xlate.so libSPIRV-Tools-shared.so; do
+            for lib in libpython3.14.so libnxpack.so libzbicdec.so libcra.so libdmsh_xlate.so libSPIRV-Tools-shared.so; do
               unzip -Z1 "$apk" | grep -Fx "lib/arm64-v8a/$lib"
             done
             unzip -Z1 "$apk" | grep -Fx 'assets/pack/python.zip'
