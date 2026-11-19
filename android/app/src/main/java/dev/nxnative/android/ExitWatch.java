@@ -135,13 +135,17 @@ final class ExitWatch {
         return false;
     }
 
-    /** Android's record of how the process with this pid ended, or null */
-    static ApplicationExitInfo exitInfo(Context c, int pid, long start) {
+    /** PEANUTS: shared by game exit notices and pack retries. A PID can be reused, so take the first matching exit since the saved run. */
+    static ApplicationExitInfo exitInfo(Context c, String process, int pid, long start) {
         ActivityManager am = c.getSystemService(ActivityManager.class);
-        if (am == null || pid <= 0) return null;
+        if (am == null || pid <= 0 || start <= 0) return null;
         try {
-            for (ApplicationExitInfo e : am.getHistoricalProcessExitReasons(c.getPackageName(), pid, 4))
-                if (e.getProcessName() != null && e.getProcessName().endsWith(":game") && e.getTimestamp() >= start) return e;
+            ApplicationExitInfo first = null;
+            for (ApplicationExitInfo e : am.getHistoricalProcessExitReasons(c.getPackageName(), pid, 0)) {
+                if (e.getTimestamp() < start) break;   // Android returns the newest exit first
+                if (process.equals(e.getProcessName())) first = e;
+            }
+            return first;
         } catch (RuntimeException ignored) { /* not available: the record alone */ }
         return null;
     }
@@ -177,7 +181,7 @@ final class ExitWatch {
         if (!ExitNotice.pending(rec)) return null;
         int pid = (int) num(rec.get("pid"));
         if (pid == android.os.Process.myPid() || pid > 0 && alive(c, pid)) return null;
-        ApplicationExitInfo e = exitInfo(c, pid, num(rec.get("start")) - 1000);
+        ApplicationExitInfo e = exitInfo(c, c.getPackageName() + ":game", pid, num(rec.get("start")) - 1000);   // PEANUTS: process-specific lookup
         if (e == null && waitForAndroid && !ExitNotice.selfExplained(rec)) return null;
         boolean bg = e != null && e.getImportance() > ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE;
         int reason = e == null ? ExitNotice.NONE : e.getReason(), status = e == null ? 0 : e.getStatus();
@@ -278,8 +282,10 @@ final class ExitWatch {
                 File dg = log == null ? null : digestOf(log);
                 String url = v == null ? null : v.docUrl();
                 String likely = LogDigest.likely(v, end.why);
+                FixFinder.Fix fix = FixOffer.find(a, v, rec);   // "Try: <row>" for this end (FixFinder), on the notice and on What it means
                 AlertDialog.Builder b = new PadFocus.Builder(a).setTitle(ExitNotice.TITLE).setMessage(ExitNotice.message(rec.get("name"), end.why, likely))
                         .setPositiveButton("OK", null);
+                FixOffer.add(a, b, fix, rec);
                 if (log != null) b.setNeutralButton("Share log", (d, w) -> a.shareLog(log, dg != null && dg.isFile() ? dg : null));
                 if (v != null && v.rule != null) {
                     b.setNegativeButton("What it means", (d, w) -> {
@@ -294,6 +300,7 @@ final class ExitWatch {
                         }
                         AlertDialog.Builder mb = new PadFocus.Builder(a).setTitle(ExitNotice.MEANING_TITLE).setMessage(msg)
                                 .setPositiveButton("OK", null);
+                        FixOffer.add(a, mb, fix, rec);
                         if (url != null) mb.setNegativeButton("More details", (d2, w2) -> a.openLink(url));
                         showing = mb.show();
                     });

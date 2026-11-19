@@ -313,7 +313,9 @@ def build_sources(exefs, romfs, modules):
                 nb = (struct.unpack_from('<I', h, i + 12)[0] + max(struct.unpack_from('<I', h, i + 4)[0], 1) - 1) // max(struct.unpack_from('<I', h, i + 4)[0], 1)
                 oodle_ue3 += h[i + 16 + 8 * nb:i + 17 + 8 * nb] == b'\x8c'
     import frostbite   # Frostbite's superbundles (EA SPORTS FC 27): every item of the cas files is Oodle Leviathan, decoded with the game's own decoder
-    return shader_sources(imports, glsl_src, glslc_mods, spirv, len(uepak.unreal_paks(str(romfs), inline=False)), trinity, len(uepak.unreal_paks(str(romfs), inline=True)), gl_names, gl_src, gl_files, oodle_pkz, nro_imp,
+    # PEANUTS: a shader library may be in an IoStore container with no shader archive in the pak beside it.
+    ue_archives = uepak.unreal_paks(str(romfs), inline=False) or uepak.io_shader_tocs(str(romfs))
+    return shader_sources(imports, glsl_src, glslc_mods, spirv, len(ue_archives), trinity, len(uepak.unreal_paks(str(romfs), inline=True)), gl_names, gl_src, gl_files, oodle_pkz, nro_imp,
                           oodle_gfpak=oodle_gfpak, oodle_ue3=oodle_ue3, frostbite=frostbite.is_frostbite(str(romfs)), romfs_glsl=romfs_glsl)
 
 
@@ -442,7 +444,11 @@ def heap_signals(log, g):
         heap = -(-max(req) // 0x8000000) * 0x8000000
         alias = reserve - 0x10000000 - stack - heap
         if alias >= 0x40000000: out['mem_alias'] = (f'{alias:#x}', f'the game asked for a {max(req) / 2**30:.2f} GB heap: a {heap / 2**30:.3f} GB heap region')
-        else: out['mem_reserve'] = (f'{0x10000000 + 0x40000000 + stack + heap:#x}', f'the game asked for a {max(req) / 2**30:.2f} GB heap')
+        else:   # a heap the block cannot hold beside a 1 GB alias region: the block grows by it, the alias region as the profile has it (the address region check sizes that after).
+            # It was sized for a 1 GB alias region and left mem_alias alone: Super Mario Bros. Wonder's program 1 (a 4.94 GB heap, a 4.375 GB alias region) got 0x1a0000000, a 1.6 GB heap region
+            have = max(int(g.get('mem_alias'), 0), 0x40000000)
+            out['mem_reserve'] = (f'{0x10000000 + have + stack + heap:#x}', f'the game asked for a {max(req) / 2**30:.2f} GB heap: a {heap / 2**30:.3f} GB heap region beside a {have / 2**30:.3f} GB alias region')
+            if have != int(g.get('mem_alias'), 0): out['mem_alias'] = (f'{have:#x}', 'the smallest alias region the heap check leaves')
     top = [float(x) for x in re.findall(r'\[mem\] alias region mapped up to \+([0-9.]+) GB', log)]
     alias = int(g.get('mem_alias'), 0) / 2**30
     if not req and '[mem] heap ' not in log and int(g.get('sys_resource', '0'), 0) and top and max(top) > alias - 0.25 and int(g.get('app_pool'), 0) > 0x40000000:

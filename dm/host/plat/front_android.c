@@ -1,12 +1,17 @@
 // Front end on Android (front.h). The guest runs on the calling thread; the window does not pass through here: the launcher hands its Surface to the NVN → Vulkan replay
-// with nxhost_set_window (dm/gfx/vk_android). Text input goes to the launcher's input box (nxhost_text_input_callback); there is no progress screen and no screen to match; nxhost_main is what the APK's launcher calls, with the
-// arguments dmhost takes on the Mac (main.c)
+// with nxhost_set_window (dm/gfx/vk_android). Text input goes to the launcher's input box (nxhost_text_input_callback). nxhost_main takes the same arguments as dmhost on the Mac.
+// PEANUTS: The front end prepares cold Vulkan pipelines before entering the guest.
 #include "../dm.h"
 #include "../front.h"
 #include "../android/input_android.h"
+#include "../../gfx/vk_android/vk_android.h"   // PEANUTS: prepare cold pipelines before guest entry
 #include <malloc.h>
 #include <stdatomic.h>
-void front_run(void (*guest)(void)) { LOG("front end: the guest runs on this thread; presents go to the launcher's window (nxhost_set_window)"); guest(); }
+void front_run(void (*guest)(void)) {
+    vka_pso_prepare_launch();   // PEANUTS: startup waits for the cold pipeline build when a seed ships
+    LOG("front end: the guest runs on this thread; presents go to the launcher's window (nxhost_set_window)");
+    guest();
+}
 void *front_metal_layer(void) { return NULL; }
 int front_screen_max_fps(void) { return 0; }
 int front_screen_variable_refresh(void) { return 0; }
@@ -18,6 +23,10 @@ extern int g_swkbd_min_chars;   // hle_swkbd.c: this input's minimum length from
 int front_text_input(const char *title, const char *sub, const char *guide, const char *initial, int max_chars, char *out, int out_cap) {
     return android_text_input(title, sub, guide, initial, max_chars, g_swkbd_min_chars > 0 ? g_swkbd_min_chars : 0, out, out_cap);
 }
+// User selector (front.h): the launcher's picker over the game (input_android.c, GameActivity's UserPicker); -2 without its callback (the host takes the preselected user)
+int front_user_select(const char *const *names, const int *offered, int n, int def) { return android_user_select(names, offered, n, def); }
+// Controller applet (front.h): the launcher's join screen over the game (input_android.c, GameActivity's CtrlScreen); -2 without its callback (the host answers at once)
+int front_controller_support(const void *arg, int *count) { return android_controller_support(arg, count); }
 int main(int argc, char **argv);
 // The launcher (android/app) calls this on a thread of its own with an 8 MB stack, which is not attached to ART. Heap pointer tagging goes off first: Bionic's malloc hands
 // out pointers with a tag in the top byte (0xb4) since Android 11, and the host gives malloc'd blocks to the guest (its TLS and thread-local region, the libc passthrough),

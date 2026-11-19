@@ -39,6 +39,7 @@ final class TouchControls extends View {
     private static final int BUTTON = 0, STICK = 1, DPAD = 2, MAX = 24;   // input_map.h NXT_*, NXT_MAX
     private static final int SHAPE_ROUND = 0, SHAPE_SHOULDER = 1;
 
+    private final String gameTitleId;  // per-game skin override; null/empty uses the global default
     private final boolean input;   // the host takes touches (nxhost_input_touch)
     private SharedPreferences prefs() { return Prefs.open(getContext(), "touch_controls"); }   // read again when the other process wrote it (Prefs.open)
     private boolean available;     // the host takes a layout (nxhost_touch_controls_set): the controls can be drawn
@@ -96,13 +97,17 @@ final class TouchControls extends View {
     private final Path path = new Path();
     private final RectF rect = new RectF();
 
-    TouchControls(Context c, boolean input) {
+    /** The visual self-test is not a game: it follows the global touch skin. */
+    TouchControls(Context c, boolean input) { this(c, input, null); }
+
+    TouchControls(Context c, boolean input, String titleId) {
         super(c);
         this.input = input;
+        this.gameTitleId = titleId;
         opacity = prefs().getFloat("opacity", 0.6f);
         scale = prefs().getFloat("scale", 1f);
         haptics = prefs().getBoolean("haptics", true);
-        skinStyle = skin(c);
+        skinStyle = skin(c, titleId);
         shown = prefs().getBoolean("shown", true);
         line.setStyle(Paint.Style.STROKE);
         text.setTextAlign(Paint.Align.CENTER);
@@ -135,10 +140,33 @@ final class TouchControls extends View {
         if (style < 0 || style >= SKIN_NAMES.length) throw new IllegalArgumentException("unknown control skin");
         Prefs.open(c, "touch_controls").edit().putInt("skin", style).commit();
     }
+    /** A game's skin choice: absent means follow global Settings, as with other per-game preferences. */
+    static int skin(Context c, String titleId) {
+        int global = skin(c);
+        if (titleId == null || titleId.isEmpty()) return global;
+        int style = Prefs.open(c, "touch_controls").getInt(Prefs.gameKey("skin", titleId), global);
+        return style >= 0 && style < SKIN_NAMES.length ? style : global;
+    }
+    static boolean ownSkin(Context c, String titleId) {
+        return titleId != null && !titleId.isEmpty() && Prefs.open(c, "touch_controls").contains(Prefs.gameKey("skin", titleId));
+    }
+    /** Null removes the game-specific choice, returning the game to the global default. */
+    static void skin(Context c, String titleId, Integer style) {
+        if (titleId == null || titleId.isEmpty()) throw new IllegalArgumentException("missing game title ID");
+        String key = Prefs.gameKey("skin", titleId);
+        SharedPreferences.Editor edit = Prefs.open(c, "touch_controls").edit();
+        if (style == null) edit.remove(key);
+        else {
+            if (style < 0 || style >= SKIN_NAMES.length) throw new IllegalArgumentException("unknown control skin");
+            edit.putInt(key, style);
+        }
+        edit.commit();
+    }
     /** Switch without changing the host's A/B/X/Y input mapping or existing layout edits. */
     void setSkin(int style) {
         if (style == skinStyle) return;
-        skin(getContext(), style);
+        if (gameTitleId == null || gameTitleId.isEmpty()) skin(getContext(), style);
+        else skin(getContext(), gameTitleId, style);
         skinStyle = style;
         prof = null; // reload the saved PlayStation layout, separate from the original Switch profile
         relayout();

@@ -46,6 +46,21 @@ final class GameSettings {
         a.gameSettings(g);
     }
 
+    /**
+     * An optional shader update (Pack.shaderUpdateAvailable): this app version makes its games' shaders in a newer way; the game plays with the ones it has until the player
+     * updates them. Shown on every tab of the game's page, under the tabs, with the button and no time promised (a game's whole shader set is made again on the phone)
+     */
+    private static void shaderUpdateCard(MainActivity a, LinearLayout content, Game g) {
+        if (Profile.of(g.titleId) == null || !new File(g.gameDir).exists() || !Pack.shaderUpdateAvailable(new File(g.packDir), g.titleId)) return;
+        LinearLayout card = Ui.add(content, Ui.card(a), 12);
+        card.setPadding(Ui.dp(a, 14), Ui.dp(a, 12), Ui.dp(a, 14), Ui.dp(a, 12));
+        card.addView(Ui.text(a, "Shader update available", 15, R.color.bn_text, 700));
+        TextView t = Ui.add(card, Ui.small(a, "Optional: the game plays as it does now. This version of " + a.getString(R.string.app_name) + " makes shaders with an updated translator. "   // PEANUTS: the app's own name (upstream: "Banana Native")
+                + "Updating makes this game's shaders again on the phone, which can take a long time for a big game: keep the phone charging."), 6);
+        t.setTextSize(13);
+        Ui.add(card, Ui.action(a, 0, "Update shaders", Ui.Kind.PRIMARY, v -> a.updateShaders(g)), 10);
+    }
+
     /** A controller's L1 / R1: the next (+1) or previous (-1) tab of the game's page, round; false when there is nothing to switch to */
     static boolean stepTab(Game g, int delta) {
         String[] keys = Profile.missing(g.titleId, g.name) == null ? new String[] {PERFORMANCE, GAME, SAVES, STORAGE} : new String[] {SAVES, STORAGE};
@@ -83,6 +98,15 @@ final class GameSettings {
         tab = keys[t];
         Ui.add(content, Ui.tabs(a, labels, t, k -> { tab = keys[k]; a.gameSettingsTop(); }), 4);
         if (missing != null) Ui.add(content, Ui.small(a, missing), 12);
+        if (Edition.offered(g)) {   // a set with a Switch 2 Edition (program 1) whose profile this APK has: which one Play starts (Edition); one save for both
+            LinearLayout ed = Ui.add(content, Ui.listCard(a), 12);
+            boolean on = Edition.on(a, id);
+            Ui.Setting s = new Ui.Setting(a, "🎮", "Switch 2 Edition", null)
+                    .value(on ? "Play starts the Switch 2 Edition (its own pack). Same save as the Switch game." : "Play starts the Switch game. Turn on for the Switch 2 Edition; the save is shared.")
+                    .toggle(a, on, (b, x) -> { Edition.set(a, id, x); again.run(); });
+            ed.addView(s.view);
+        }
+        shaderUpdateCard(a, content, g);
         if (!tab.equals(PERFORMANCE) && !tab.equals(GAME)) { a.gameTab(content, g, tab.equals(SAVES)); return; }
         boolean perf = tab.equals(PERFORMANCE);
         if (perf) Ui.add(content, Ui.statusChip(a, chipText(a, id)), 12, Ui.wrap());
@@ -172,14 +196,8 @@ final class GameSettings {
             picture.add(new Ui.Setting(a, "🔳", "Aspect ratio", v -> aspect(a, g, again)).value(aspectLabel(a, id)).chevron(a));
 
         // ---- Speed ----
-        if (!Prefs.limited(id) && Prefs.ownRate(a, id)) {   // the host found no limiter it can hold for this game: choices would do nothing (the host's frame limiter holds a limited game)
-            Ui.Setting fixed = speed.add(new Ui.Setting(a, "⏱️", "Frame rate cap", null).value("This game picks its own frame rate"));
-            fixed.view.setClickable(false);
-            fixed.view.setAlpha(0.6f);
-        } else {
-            Ui.Setting cap = speed.add(track(recRows, Recommend.FPS_CAP, new Ui.Setting(a, "⏱️", "Frame rate cap", v -> cap(a, g, again)).value(capLabel(a, id)).chevron(a)));
-            if (Prefs.limited(id) && Prefs.presentOnly(id)) { cap.badge("Experimental"); speed.info += " " + Prefs.PRESENT_ONLY_NOTE; }   // fps_limit_present: the limit paces the presents only
-        }
+        Ui.Setting cap = speed.add(track(recRows, Recommend.FPS_CAP, new Ui.Setting(a, "⏱️", "Frame rate cap", v -> cap(a, g, again)).value(capLabel(a, id)).chevron(a)));
+        if (Prefs.limited(id) && Prefs.presentOnly(id)) { cap.badge("Experimental"); speed.info += " " + Prefs.PRESENT_ONLY_NOTE; }
         if (Prefs.steps(id)) {   // a framework of whole steps a frame (fps_steps): Hold 60 fps keeps one step at the cap of 60. The in-game panel changes it live
             Ui.Setting hold = new Ui.Setting(a, "🎯", "Hold 60 fps", null).toggle(a, Prefs.hold60(a, id), (b, on) -> { Prefs.hold60(a, id, on); refresh[0].run(); });
             hold.says("Never drops to 30; less even under 60", "Drops to 30 when 60 does not hold");
@@ -192,7 +210,7 @@ final class GameSettings {
         }
         if (Prefs.drsGame(id) && !simple)   // the host's dynamic resolution slider: testers only for a game with Resolution presets (Quality is the game's own dynamic resolution)
             speed.add(track(recRows, Recommend.DRS, new Ui.Setting(a, "📏", "Dynamic resolution", v -> drs(a, g, again)).value(drsValue(Prefs.drs(a, id))).chevron(a)));
-        speed.add(track(recRows, Recommend.DRIVER, new Ui.Setting(a, "🎮", "GPU driver", v -> driver(a, g, again)).value(driverShort(a, id)).chevron(a)));
+        speed.add(track(recRows, Recommend.DRIVER, new Ui.Setting(a, "🎮", "GPU driver", v -> dev.peanuts.ui.DriverActivity.openForGame(a, g.titleId, g.name)).value(driverShort(a, id)).chevron(a)));   // PEANUTS: the full GPU driver page, scoped to this game
 
         // ---- Game options: the profile's own switches ----
         if (prof != null && prof.vegetationDetail) {
@@ -251,13 +269,22 @@ final class GameSettings {
             updateRows.run();
         }
 
+        if (Prefs.cheatsGame(id)) CheatsUi.rows(a, g, options::add, again);   // a profile with cheat files (game.tsv cheats): the switch, off by default, and the files
         if (LinkPlay.has(id))
             options.add(new Ui.Setting(a, "🔗", "Link Play", v -> LinkPlay.dialog(a, g, again)).value(LinkPlay.label(a, id)).chevron(a));
         options.add(new Ui.Setting(a, "🌐", "Game language", v -> language(a, g, again)).value(GameLanguage.label(Prefs.gameLang(a, id), phoneTag())).chevron(a));   // not a tester's knob: with the game's options, never folded
+        if (prof != null && prof.timeOfDay)   // the one global setting (Prefs.timeOverride → DM_TIME), here for a game whose day/night cycle follows the user clock
+            options.add(new Ui.Setting(a, "🕒", "Time of day", v -> TimeOfDay.dialog(a, again)).value(TimeOfDay.label(a)).chevron(a));
 
         // ---- Controls ----
         controls.add(new Ui.Setting(a, "📳", "Rumble", null).toggle(a, Prefs.rumble(a, id), (b, on) -> Prefs.rumble(a, id, on)).says("The controller, or the phone without one", "No rumble"));
+        controls.add(new Ui.Setting(a, "🎨", "Virtual controller style", v -> touchSkin(a, g, again))
+                .value(TouchControls.ownSkin(a, id) ? TouchControls.SKIN_NAMES[TouchControls.skin(a, id)]
+                        : "Default (Settings: " + TouchControls.SKIN_NAMES[TouchControls.skin(a)] + ")")
+                .note("On-screen buttons and stick layout; not the physical controller mapping. Applies at the next start.")
+                .chevron(a));
         controls.add(new Ui.Setting(a, "🕹️", "Button mapping", v -> PadMapUi.forGame(a, g, again)).value(PadMapUi.label(a, id)).chevron(a));
+        controls.add(new Ui.Setting(a, "🎯", "Motion sensitivity", v -> motionSens(a, g, again)).value(Prefs.MOTION_NAMES[Prefs.motionSens(a, id)]).note("How far the phone's gyro turns the aim; from the next start").chevron(a));
         controls.add(new Ui.Setting(a, "🅰️", "Xbox button labels", v -> xbox(a, g, again)).value(Prefs.xboxLabel(Prefs.xboxButtons(a, id))).chevron(a));
 
         // ---- Advanced: for testers ----
@@ -276,6 +303,10 @@ final class GameSettings {
                 .says("Busy threads off the small cores", "Android places the threads"));
         advanced.add(new Ui.Setting(a, "⏸️", "Pause on return", null).toggle(a, Prefs.pauseOnReturn(a, id), (b, on) -> Prefs.pauseOnReturn(a, id, on))
                 .says("Back from the background: paused until a tap", "Back from the background: runs at once"));
+        Ui.Setting advRow = new Ui.Setting(a, "🛠️", "Advanced switches", null).chevron(a);   // every switch for this game, by area, with search (AdvancedPage.java)
+        advRow.view.setOnClickListener(v -> AdvancedPage.show(a, id, g.name, again));
+        advRow.value(AdvancedSettings.count(a, id) == 0 ? "Search every switch; each starts at Auto" : AdvancedSettings.count(a, id) + " set");
+        advanced.add(advRow);
         String env = Prefs.gameEnv(a, id);
         int envLines = env.isEmpty() ? 0 : env.split("\n").length;
         advanced.add(new Ui.Setting(a, "📝", "Extra environment", v -> env(a, g, again))
@@ -286,7 +317,7 @@ final class GameSettings {
         Section[] all = perf ? new Section[] {picture, speed, advanced} : new Section[] {options, controls};   // Performance: what changes speed and picture; Game: the game's own options, language and controls
         View reset = recLine != null ? null : Ui.button(a, "Reset to defaults", Ui.Kind.SOFT, v -> new PadFocus.Builder(a).setTitle("Reset to defaults · " + g.name)
                 .setMessage("The game will follow global settings. Extra environment lines are kept.")
-                .setPositiveButton("Reset", (x, w) -> { Prefs.resetGame(a, id); again.run(); }).setNegativeButton("Cancel", null).show());
+                .setPositiveButton("Reset", (x, w) -> { Prefs.resetGame(a, id); TouchControls.skin(a, id, null); again.run(); }).setNegativeButton("Cancel", null).show());
         if (wide) rail(a, content, all, reset, again);
         else column(a, content, all, reset);
         refresh[0].run();   // the tags, the Recommended: lines and the choice's changed line
@@ -322,6 +353,12 @@ final class GameSettings {
             t.setPadding(Ui.dp(a, 4), 0, Ui.dp(a, 4), 0);
             Ui.add(out, t, 4);
         }
+        // the dump's version and publisher ("1.2.1 · Nintendo": a .nup's meta block, a folder's control data), under the name once read
+        TextView meta = Ui.small(a, "");
+        meta.setPadding(Ui.dp(a, wide ? 62 : 4), 0, Ui.dp(a, 4), 0);
+        meta.setVisibility(View.GONE);
+        Ui.add(out, meta, 2);
+        GameMeta.loadControl(new File(g.gameDir), Edition.control(a, g), m -> { String l = m.line(); if (l != null) { meta.setText(l); meta.setVisibility(View.VISIBLE); } });
         return out;
     }
 
@@ -473,6 +510,7 @@ final class GameSettings {
     }
 
     static String capLabel(MainActivity a, String id) {
+        if (!Prefs.limited(id) && Prefs.ownRate(a, id)) return "Game owned";
         String l = Prefs.limited(id) ? Prefs.paceLabel(Prefs.paceCap(a, id)) : MainActivity.capLabel(Prefs.fpsCap(a, id));
         return l;
     }
@@ -691,6 +729,20 @@ final class GameSettings {
         }).setNegativeButton("Cancel", null).show();
     }
 
+    /** This game's optional touch-controller style; the Default row follows the global Settings choice. */
+    private static void touchSkin(MainActivity a, Game g, Runnable done) {
+        String[] labels = new String[TouchControls.SKIN_NAMES.length + 1];
+        labels[0] = "Default (Settings: " + TouchControls.SKIN_NAMES[TouchControls.skin(a)] + ")";
+        System.arraycopy(TouchControls.SKIN_NAMES, 0, labels, 1, TouchControls.SKIN_NAMES.length);
+        int checked = TouchControls.ownSkin(a, g.titleId) ? TouchControls.skin(a, g.titleId) + 1 : 0;
+        new PadFocus.Builder(a).setTitle("Virtual controller style · " + g.name)
+                .setSingleChoiceItems(labels, checked, (x, w) -> {
+                    TouchControls.skin(a, g.titleId, w == 0 ? null : w - 1);
+                    x.dismiss();
+                    done.run();
+                }).setNegativeButton("Cancel", null).show();
+    }
+
     private static void xbox(MainActivity a, Game g, Runnable done) {   // Default first: the game follows Settings again
         String[] labels = new String[Prefs.XBOX_NAMES.length + 1];
         labels[0] = "Default (Settings: " + Prefs.xboxLabel(Prefs.xboxButtons(a)) + ")";
@@ -703,21 +755,41 @@ final class GameSettings {
         }).setNegativeButton("Cancel", null).show();
     }
 
+    private static android.widget.ListAdapter capItems(MainActivity a, String[] labels, boolean[] enabled) {
+        return new android.widget.ArrayAdapter<String>(a, android.R.layout.simple_list_item_single_choice, labels) {
+            @Override public boolean areAllItemsEnabled() { return false; }
+            @Override public boolean isEnabled(int position) { return enabled[position]; }
+            @Override public View getView(int position, View convert, ViewGroup parent) {
+                View v = super.getView(position, convert, parent); v.setEnabled(enabled[position]); v.setAlpha(enabled[position] ? 1f : 0.4f); return v;
+            }
+        };
+    }
+
     private static void cap(MainActivity a, Game g, Runnable done) {
         if (Prefs.limited(g.titleId)) {   // a frame limit, no locking (Prefs.PACE_CAPS)
-            String[] labels = new String[Prefs.PACE_CAPS.length + 1];
+            int[] choices = FrameRateCaps.menu(), allowed = Prefs.paceCaps(g.titleId);
+            boolean[] enabled = new boolean[choices.length + 1]; enabled[0] = true;
+            String[] labels = new String[choices.length + 1];
             int pl = Prefs.profileLimit(g.titleId);   // the profile's own default (fps_limit), else the main screen's
             Integer rc = Prefs.recCap(a, g.titleId);
-            labels[0] = rc != null ? "Recommended (" + Prefs.paceLabel(rc) + ")" : pl > 0 ? "Default (this game's: " + Prefs.paceLabel(Prefs.paceOf(pl)) + ")" : "Default (Settings: " + Prefs.paceLabel(Prefs.paceOf(Prefs.fpsCap(a))) + ")";
+            // PEANUTS: Describe the game-owned default for an optional presentation cap.
+            Profile p = Profile.of(g.titleId);
+            if (rc != null) labels[0] = "Recommended (" + Prefs.paceLabel(rc) + ")";
+            else if (p != null && p.optInPresentRate()) labels[0] = "Default (Game owned)";
+            else if (pl > 0) labels[0] = "Default (this game's: " + Prefs.paceLabel(Prefs.paceOf(pl)) + ")";
+            else labels[0] = "Default (Settings: " + Prefs.paceLabel(Prefs.paceOf(Prefs.fpsCap(a))) + ")";
             int checked = 0, cur = Prefs.paceCap(a, g.titleId);
-            for (int k = 0; k < Prefs.PACE_CAPS.length; k++) { labels[k + 1] = Prefs.paceLabel(Prefs.PACE_CAPS[k]); if (Prefs.ownFpsCap(a, g.titleId) && Prefs.PACE_CAPS[k] == cur) checked = k + 1; }
-            new PadFocus.Builder(a).setTitle("Frame rate cap · " + g.name).setSingleChoiceItems(labels, checked, (x, w) -> {
-                Prefs.fpsCap(a, g.titleId, w == 0 ? null : Prefs.PACE_CAPS[w - 1]);
+            for (int k = 0; k < choices.length; k++) { enabled[k + 1] = FrameRateCaps.contains(allowed, choices[k]); labels[k + 1] = Prefs.paceLabel(choices[k]) + (enabled[k + 1] ? "" : " · unavailable for this game"); if (Prefs.ownFpsCap(a, g.titleId) && choices[k] == cur) checked = k + 1; }
+            new PadFocus.Builder(a).setTitle("Frame rate cap · " + g.name).setSingleChoiceItems(capItems(a, labels, enabled), checked, (x, w) -> {
+                if (!enabled[w]) return;
+                Prefs.fpsCap(a, g.titleId, w == 0 ? null : choices[w - 1]);
                 x.dismiss(); done.run();
             }).setNegativeButton("Cancel", null).show();
             return;
         }
-        int n = Prefs.FPS_CAPS.length;
+        int[] choices = {0, 120, 90, 60, 45, 40, 30, 20, 15};
+        int n = choices.length;
+        boolean[] enabled = new boolean[n + 2]; enabled[0] = enabled[1] = true;
         String[] labels = new String[n + 2];
         Integer rc = Prefs.recCap(a, g.titleId);
         labels[0] = firstLabel(rc != null ? MainActivity.capLabel(rc) : null, MainActivity.capLabel(Prefs.fpsCap(a)));
@@ -727,31 +799,14 @@ final class GameSettings {
         int cur = Prefs.fpsCap(a, g.titleId);
         if (own && cur < 0) checked = 1;
         for (int k = 0; k < n; k++) {
-            labels[k + 2] = MainActivity.capLabel(Prefs.FPS_CAPS[k]);
-            if (own && Prefs.FPS_CAPS[k] == cur) checked = k + 2;
+            labels[k + 2] = (choices[k] == 0 ? "Game owned" : MainActivity.capLabel(choices[k]));
+            enabled[k + 2] = choices[k] == 0 || !Prefs.ownRate(a, g.titleId) && FrameRateCaps.contains(Prefs.FPS_CAPS, choices[k]);
+            if (!enabled[k + 2]) labels[k + 2] += " · unavailable for this game";
+            if (own && choices[k] == cur) checked = k + 2;
         }
-        new PadFocus.Builder(a).setTitle("Frame rate cap · " + g.name).setSingleChoiceItems(labels, checked, (x, w) -> {
-            Prefs.fpsCap(a, g.titleId, w == 0 ? null : w == 1 ? -1 : Prefs.FPS_CAPS[w - 2]);
-            x.dismiss();
-            done.run();
-        }).setNegativeButton("Cancel", null).show();
-    }
-
-    private static void driver(MainActivity a, Game g, Runnable done) {
-        List<GpuDriver.Info> inst = GpuDriver.installed(a);
-        GpuDriver.Info def = GpuDriver.selected(a);
-        List<String> labels = new ArrayList<>();
-        String rd = Prefs.recommendedDriver(a, g.titleId);   // the first choice is this phone's recommended driver when there is one (Prefs.recommendedDriver)
-        labels.add(rd != null ? "Recommended (" + Prefs.recName(a, g.titleId, Recommend.DRIVER, Recommend.SYSTEM.equals(rd) ? "system" : rd) + ")" : "Default (the main screen's: " + (def == null ? "System" : def.label()) + ")");
-        labels.add("System (the phone's own driver)");
-        String c = GpuDriver.choice(a, g.titleId);
-        int checked = c == null ? 0 : c.equals(GpuDriver.SYSTEM) ? 1 : 0;
-        for (int k = 0; k < inst.size(); k++) {
-            labels.add(inst.get(k).label());
-            if (c != null && inst.get(k).dir.getName().equals(c)) checked = k + 2;
-        }
-        new PadFocus.Builder(a).setTitle("GPU driver · " + g.name).setSingleChoiceItems(labels.toArray(new String[0]), checked, (x, w) -> {
-            GpuDriver.choice(a, g.titleId, w == 0 ? null : w == 1 ? GpuDriver.SYSTEM : inst.get(w - 2).dir.getName());
+        new PadFocus.Builder(a).setTitle("Frame rate cap · " + g.name).setSingleChoiceItems(capItems(a, labels, enabled), checked, (x, w) -> {
+            if (!enabled[w]) return;
+            Prefs.fpsCap(a, g.titleId, w == 0 ? null : w == 1 ? -1 : choices[w - 2]);
             x.dismiss();
             done.run();
         }).setNegativeButton("Cancel", null).show();
@@ -813,6 +868,10 @@ final class GameSettings {
                           DlssTune.sharpName(DlssTune.SHARP_DEFAULT), GameUpscaler.ownDlssSharp(a, g.titleId), v -> GameUpscaler.dlssSharp(a, g.titleId, v), done);
     }
 
+    private static void motionSens(MainActivity a, Game g, Runnable done) {   // the phone's gyro scale (Prefs.MOTION_PCT, DM_MOTION_SENS); read when the game starts
+        StepSlider.dialog(a, "Motion sensitivity", " · " + g.name, Prefs.MOTION_NAMES, Prefs.motionSens(a, g.titleId), "Slower", "Faster",
+                          Prefs.MOTION_NAMES[Prefs.MOTION_DEFAULT], Prefs.ownMotionSens(a, g.titleId), v -> Prefs.motionSens(a, g.titleId, v), done);
+    }
     private static void drs(MainActivity a, Game g, Runnable done) {   // the render size's range (Prefs.DRS), from the next start; the in-game panel changes it live
         DrsSlider.dialog(a, " · " + g.name, Prefs.drs(a, g.titleId), firstLabel(recLabel(Prefs.DRS_NAMES, Recommend.DRS_VALUES, Prefs.rec(a, g.titleId, Recommend.DRS)), Prefs.DRS_NAMES[Prefs.drs(a)]), Prefs.ownDrs(a, g.titleId), v -> Prefs.drs(a, g.titleId, v), done);
     }

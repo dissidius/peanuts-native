@@ -23,9 +23,10 @@ class GameSettingsPage(unittest.TestCase):
     def test_every_setting_reachable(self):
         for call in ('presets(a, g, again)', 'resolution(a, g, again)', 'scene(a, g, again)', 'upscaler(a, g, again)', 'sharpness(a, g, again)', 'dlssMode(a, g, again)',
                      'clarity(a, g, again)', 'dlssSharp(a, g, again)', 'display(a, g, again)', 'aspect(a, g, again)', 'cap(a, g, again)', 'drs(a, g, again)',
-                     'driver(a, g, again)', 'gpuTiming(a, g, again)', 'language(a, g, again)', 'xbox(a, g, again)', 'PadMapUi.forGame(a, g, again)', 'env(a, g, again)',
+                     'gpuTiming(a, g, again)', 'language(a, g, again)', 'xbox(a, g, again)', 'PadMapUi.forGame(a, g, again)', 'env(a, g, again)',
                      'Prefs.resetGame(a, id)', 'Prefs.backToRecommended(a, id)'):
             self.assertIn(call, self.gs, f'{call}: its row is gone')
+        self.assertIn('"GPU driver", v -> dev.peanuts.ui.DriverActivity.openForGame(a, g.titleId, g.name)', self.gs)   # PEANUTS: the row opens this game's driver page
         for setter in ('fullVegetation', 'skipLayers', 'hold60', 'decouple', 'instancedDraws', 'classicPasses', 'psoAsync', 'ramSaver', 'pauseOnReturn', 'rumble', 'pinThreads'):
             self.assertIn(f'Prefs.{setter}(a, id, on)', self.gs, f'{setter}: its switch is gone')
         self.assertIn('Prefs.gameOption(a, id, opt.env, checked)', self.gs, "the profile's options")
@@ -78,7 +79,7 @@ class GameSettingsPage(unittest.TestCase):
     def test_rows_say_what_they_do(self):   # seen on the folded 1080 px screen: tags squeezing the text, "Needs Prepare again (Pr…" in place of the description
         ui = (SRC / 'Ui.java').read_text(encoding='utf-8')
         row = ui.split('static final class Setting {')[1].split('private void line()')[0]
-        self.assertIn('value.setMaxLines(3);', row, 'a description wraps instead of being cut')
+        self.assertIn('value.setMaxLines(8);', row, 'a description wraps instead of being cut')
         self.assertLess(row.index('col.addView(value'), row.index('col.addView(tags'), 'the tags on their own line, under the text')
         self.assertIn('Setting status(CharSequence s)', ui)
         self.assertIn('s.value(opt.description);', self.gs, "an option's row always says what it does")

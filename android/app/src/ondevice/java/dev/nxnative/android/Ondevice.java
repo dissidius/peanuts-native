@@ -76,6 +76,7 @@ final class Ondevice {
      * (a game added with another pack, e.g. the play app's beside the dump), never a whole job, never a job for another pack folder
      */
     static void autoUpdate(MainActivity a, File dump, File packDir, String titleId) {
+        if (panel != null && (panel.moddedAlive || dev.peanuts.build.ModdedBuild.isVariantPack(packDir))) return;   // PEANUTS: not beside a build with code mods that runs (the packer runs one job), and never a variant's pack (its own build remakes it)
         if (panel == null || panel.a != a || panel.alive() || deltaShaders(packDir, titleId) < 0 || !autoTried.add(dump.getPath())) return;
         panel.picked(dump, true, packDir, false, true);
     }
@@ -87,6 +88,7 @@ final class Ondevice {
      * running; once per dump per app process. The rewrite goes through the job's staging and swap, so a stopped update never leaves new code beside old tables
      */
     static boolean autoCodeUpdate(MainActivity a, File dump, File packDir) {
+        if (panel != null && (panel.moddedAlive || dev.peanuts.build.ModdedBuild.isVariantPack(packDir))) return false;   // PEANUTS: as autoUpdate: no job written while a build with code mods runs, none for a variant's pack
         if (panel == null || panel.a != a || panel.alive() || gameRunning(a) || !autoTried.add("code:" + dump.getPath())) return false;
         panel.picked(dump, true, packDir, true, true);
         return true;
@@ -191,6 +193,7 @@ final class Ondevice {
         private String placedFor;   // which job (dump and pack) the list was last built for
         private String metaLine;   // the game's version and publisher from its .nup, shown before the state
         boolean jobAlive;   // the service said its worker runs this job
+        boolean moddedAlive;   // PEANUTS: the service said its worker runs a build with code mods, which is not this panel's job (onMessage): no background job is started beside it
 
         Panel(MainActivity a) {
             this.a = a;
@@ -248,6 +251,7 @@ final class Ondevice {
             update = Ui.button(a, "Check for updates", Ui.Kind.SOFT, v -> Updater.checkNow(a));
             update.setVisibility(View.GONE);
             Ui.add(card, update, 8);
+            dev.peanuts.ui.BuildLogUi.card(a, card, () -> job == null ? null : new String[] {job.titleId(), job.name(), job.state()});   // PEANUTS: Share build log while the job has failed or is paused
             load();
             show();
         }
@@ -288,7 +292,7 @@ final class Ondevice {
                 a.unbindService(this);
                 bound = false;
                 service = null;
-                jobAlive = false;
+                jobAlive = false; moddedAlive = false;   // PEANUTS: moddedAlive
             }
         }
 
@@ -320,13 +324,13 @@ final class Ondevice {
 
         @Override public void onServiceDisconnected(ComponentName n) {   // the :pack process died
             service = null;
-            jobAlive = false;
+            jobAlive = false; moddedAlive = false;   // PEANUTS: moddedAlive
             show();
         }
 
         @Override public void onBindingDied(ComponentName n) {
             service = null;
-            jobAlive = false;
+            jobAlive = false; moddedAlive = false;   // PEANUTS: moddedAlive
             if (bound) { a.unbindService(this); bound = false; }
             if (resumed) bound = a.bindService(new Intent(a, PackService.class), this, 0);
         }
@@ -339,7 +343,8 @@ final class Ondevice {
             // which is not remembered so that this panel does not follow it. Taken here it became the panel's job, and when it was done show() put its pack,
             // the variant's, into the game list as the game's own (addGame): the game's page and its Mods section then took the variant for the game's build,
             // and when the mod was deleted the game had no pack. Such a job is the Mods section's alone
-            if (j != null && !j.modArgs().isEmpty()) return true;
+            if (j != null && !j.modArgs().isEmpty()) { moddedAlive = d.getBoolean("alive"); return true; }
+            moddedAlive = false;   // PEANUTS: the packer runs one job, and this one is not a build with code mods
             if (j != null) job = j;
             jobAlive = d.getBoolean("alive");
             show();
@@ -381,9 +386,10 @@ final class Ondevice {
             // A job of a game this app version does not include (made by an APK that had it): one sentence, nothing to press but ⋯ (Forget, the deletes)
             String notIncluded = Profile.missing(job.titleId(), job.name());
             boolean failed = "failed".equals(st);
-            title.setText((metaLine != null ? metaLine + " \u00b7 " : "") + (notIncluded != null ? "Not in this app version" : "done".equals(st) ? "Prepared" : "pending".equals(st) ? "Ready to prepare" : failed ? "Could not prepare"
+            String unsupported = a.getString(R.string.not_supported_yet);   // PEANUTS: match the Home filter
+            title.setText((metaLine != null ? metaLine + " \u00b7 " : "") + (notIncluded != null ? unsupported : "done".equals(st) ? "Prepared" : "pending".equals(st) ? "Ready to prepare" : failed ? "Could not prepare"
                     : "paused".equals(st) ? "Paused" : "Preparing") + (job.tryAnyway() ? " · tried anyway" : "") + sim);
-            status.setText(notIncluded != null ? notIncluded : job.statusText(alive));
+            status.setText(notIncluded != null ? notIncluded : failed ? job.failureSummary() : job.statusText(alive));   // PEANUTS: show the tool error beside Share build log
             int pct = (int) Math.round(job.overall() * 1000);
             bar.setProgress(pct);
             bar.setStateDescription((pct / 10) + " percent");
@@ -693,6 +699,10 @@ final class Ondevice {
         void goOrPause() {
             if (job == null) return;
             if (go.getText().toString().equals("Pause")) { pauseJob("launcher"); return; }
+            // PEANUTS: a finished job of an earlier app version (its shaders or code are another version's: the card comes back with "Resume" after an update). Its
+            // game is built again from this fork's build sheet, which keeps the pack's note, its companion and its builds with mods in step (dev.peanuts.build.Prepare);
+            // upstream's own job from here made the shaders again and nothing else
+            if ("done".equals(job.state()) && job.apkChanged() && Profile.missing(job.titleId(), job.name()) == null) { dev.peanuts.ui.GameSheet.open(a, job.titleId()); return; }
             String missing = Profile.missing(job.titleId(), job.name());
             if (missing != null) { a.error(missing); return; }   // the button is hidden then; a click queued before it was is answered the same way
             if (a.needAccess(job.dump())) return;
@@ -731,6 +741,7 @@ final class Ondevice {
             View line = new View(a);
             line.setBackgroundColor(Ui.col(a, R.color.bn_card_stroke));
             Ui.add(box, line, 20, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)));
+            Ui.add(box, Ui.button(a, "Share build log", Ui.Kind.QUIET, v -> { d[0].dismiss(); dev.peanuts.ui.BuildLogUi.share(a, j.titleId(), j.name()); }), 14, Ui.wrap());   // PEANUTS: Share build log
             if (running) Ui.add(box, Ui.small(a, "Pause first to forget or delete."), 14);
             Button f = Ui.button(a, "Forget this job…", Ui.Kind.QUIET, v -> { d[0].dismiss(); forget(); });
             f.setEnabled(!running);
@@ -784,7 +795,7 @@ final class Ondevice {
                 }
             }
             StringBuilder m = new StringBuilder("Deleted:\n· the working files in " + dir + " (rewritten code, split and translated shaders, the job's progress)"
-                    + "\n· the split's kept progress, a copy in the app's own storage");
+                    + "\n· the split's kept progress and the translated shaders kept in the app's own storage");
             if (pk != null) m.append(inside(pk, dir) ? " with the pack inside it" : "\n· the prepared pack and its shader library in " + pk);
             m.append("\n\nKept: your dump (" + j.dump() + ") and your saves").append(save != null ? " (" + save + ")" : "")
                     .append(pk == null ? ", and the pack (" + j.pack() + ")" : "").append(". Saves are never deleted here.");
@@ -794,6 +805,7 @@ final class Ondevice {
                 new Thread(() -> {
                     for (File g : gone) Job.deleteTree(g);
                     Job.deleteTree(j.splitScan(a));   // the split's kept scan results, in the app's own storage
+                    j.deleteResults(a);   // the shaders step's results, in the app's own storage
                     h.post(() -> {
                         wait.dismiss();
                         Job.remember(a, null);

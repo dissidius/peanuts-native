@@ -4,6 +4,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 
 ## Containers by engine
 
+### One scrambled archive indexed by the NRO
+
+- **Symptom:** the split finds no shaders (on macOS also `OSError: [Errno 22]`, a single read of the whole file over 2 GiB), and the RomFS is one huge file with a short name (`42`) whose bytes look random past a table at its start (magic `CRA.`).
+- **Cause:** [Mario Tennis Fever](../../dm/games/0400D4201C6EA000/README.md)'s engine keeps its 8,671 files in that archive, listed only in the game's code: a file table in read-only data of an NRO that `main` decodes at run time. Each file is scrambled in 16-byte blocks with a key from its name, and most are NARC containers (the DS's format) whose members are packed by their first byte (LZ4, zstd, deflate, an LZ of the game's own, or chunks of these). The shaders are BNSH in the FSHA, VFXB and SARC members, one FSHA per model, and 40 more in the NRO's own data.
+- **Fix:** `dm/gfx/tools/cra.py` (from nxnative `b6dbb851`) finds the table from the code that reads it and reads a file as the game does; the game's checksum of each file catches a wrong key. `shader_split.py` (`cra_jobs`) reads the NRO from `DM_NRO_DIR`, else from `main` ([Prepare stops at the split of a game whose code a boot stub packs into `main`](packing.md#prepare-stops-at-the-split-of-a-game-whose-code-a-boot-stub-packs-into-main)), scans each file but sound and movies (by their magics) in ranges by its own offsets, and expands NARC members in `scan_blob`. `DM_NRO_DIR` is part of the resume cache's key. The NRO is decoded from `main` by `nro_collect.py` ([The game's code packed into `main` by a boot stub](services.md#the-games-code-packed-into-main-by-a-boot-stub)); its output folder is a `DM_NRO_DIR`.
+- **Check:** `dm/tools/tests/test_split_cra.py`. On 1.1.1 the split makes the profile's four tables byte for byte (35,045 shaders).
+- **Found on:** [Mario Tennis Fever](../../dm/games/0400D4201C6EA000/README.md).
+
 ### Sumo Ninty_NX shaders and MuxFDMR streams
 
 - **Symptom:** the split finds no shaders in `main` or RomFS, while reporting control sections in `main` with no code area. The game has `.sp4` resources and loose `.nvnbin` files rather than BNSH archives or whole GLSLC outputs.
@@ -18,6 +26,15 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Fix:** `vbf.py` reads the Switch archive's two hash tables, file records, names and block lengths through the RomFS adapter. The split reads compiled effects and shader members without extracting textures or audio. `phyre_shaders` verifies the adjacent code header, the control's code length and stage, and preserves the original bytes and keys. Single-stage vertex programs use a pixel-input cover for padding.
 - **Found on:** [FINAL FANTASY X/X-2 HD Remaster](../../dm/games/0100BC300CB48000/README.md); base and both supplied DLC packs yield 5,752 unique shaders.
 - **Check:** `test_vbf.py` covers raw and zlib blocks, shared/missing members, truncation, unaligned effects, loose shader keys and inconsistent lengths. All 5,752 programs translate on the Mac.
+
+### Diablo III's console packages
+<!-- PEANUTS: Diablo III shader package support. -->
+
+- **Symptom:** the split finds no shaders (`[RED] the shader split found no shaders in main or the RomFS`), the RomFS holds only `.cpk` files, and `cpk.py` refuses them (`not a CPK`); the run prints `[RED] shader … is not in the shader map` for every program.
+- **Cause:** Diablo III: Eternal Collection's `.cpk` files are Blizzard's console packages, not CRI's: they start with the u32 `0xa1b2c3d4` and a version (7), then bit-packed tables and the data in 64 KiB sectors. Each file is stored or one zlib stream behind a 6-byte record `{u32 decoded length, u16 stored length}`; the game's SNO assets (`0xdeadbeef` headers) are such streams, and its shader assets hold each program as a control section directly followed by its code area. No reader looked inside the streams.
+- **Fix:** `dm/gfx/tools/d3cpk.py` finds each stream by its record and keeps it only when it inflates to exactly its decoded length and ends at its stored length, so a false start in stored data is left out; it does not read the archive's tables (no stream crosses a sector: in `ClientCommon.cpk` all 57,942 store at most 0xffff bytes). `shader_split.py` reads the packages in byte ranges (`d3cpk_jobs`) and takes every control section of 0x760 to 0x880 bytes followed by its code area in the same stream (`d3cpk_shaders`), each a program of one stage; one that is not is named in a red line, never dropped silently.
+- **Found on:** [Diablo III: Eternal Collection](../../dm/games/01001B300B9BE000/README.md) 2.7.7: 1,324 shaders (562 vertex, 762 pixel) from 16 GB in 26 s, against none before; every program the game asked for up to its menus is among them.
+- **Check:** `dm/tools/tests/test_split_d3cpk.py`: shaders in streams among stored data with a false zlib header, any cut of the byte ranges giving the same keys, a control section whose code area is cut short named, a record whose decoded length is wrong not taken.
 
 ### A file no reader reads
 
@@ -168,6 +185,16 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Fix:** `shader_split.py` lists a file that starts with `PAK` by its own header (`heaps_pak_files`; a file that does not parse as one, ending in `DATA`, goes on to the other readers), reads only its `shaders.cache.nx`, and decodes each comment (`heaps_shaders`). Each output holds both stages, so they pair with each other ([GLSLC outputs holding several stages](#glslc-outputs-holding-several-stages)).
 - **Found on:** [Dead Cells](../../dm/games/0100646009FBE000/README.md): `res1.pak`, 1,222 outputs, 1,262 unique shaders and 1,222 pairs.
 
+
+### GLSLC outputs in Alchemy's igArchive files
+
+<!-- PEANUTS(upstream-candidate): the igArchive reader, first met on Crash Team Racing Nitro-Fueled -->
+
+- **Symptom:** the split finds only the few GLSLC outputs in `main` (`shaders: 12 …; sources main 12`), and the RomFS is hundreds of `.pak` files that start with `IGA\x1a`, one of them named for shaders (`archives/shaders_nx.pak`). Run with such a library, the game logs `not in the shader library` for nearly every draw.
+- **Cause:** Vicarious Visions' Alchemy keeps its files in igArchive archives (version 13 here). After a 0x38-byte header come a hash and a 16-byte record per file (offset, ordinal, length, mode), then three block tables of u32, u16 and u8 entries. A file whose mode is not `0xFFFFFFFF` is LZMA (mode's top 4 bits = 2) in blocks of 0x8000 bytes; the rest of the mode is the file's first entry in the table its length picks (at most 0x7F sectors of 0x800 bytes: the u8 table; at most 0x7FFF: the u16 table; else the u32 table). An entry's top bit says its block is compressed (u32 stored length, 5 LZMA property bytes, the raw stream) and its other bits are the block's sector from the file's offset; a block that did not shrink is stored as it is. The shader `.igz` files hold whole GLSLC outputs, one stage each, so their magic is in no stored byte of the archive.
+- **Fix:** `shader_split.py` lists a file that starts with `IGA\x1a` by its own tables (`iga_entries`), decodes every file in it (`iga_member`) and takes the GLSLC outputs of those that hold the magic (`iga_shaders`). Which blocks are compressed comes from the block table alone: a stored block can begin with bytes that read as a small length (65 files of this game have one). Each output is one stage, so the vertex shaders get the pixel input cover ([Single-stage programs paired with a cover](#single-stage-programs-paired-with-a-cover)).
+- **Found on:** [Crash Team Racing Nitro-Fueled](../../dm/games/0100F9F00C696000/README.md): 401 archives, 74,311 files, 2,582 outputs in the 86 shader files of `shaders_nx.pak`, 1,933 unique shaders; none in the other 400.
+
 ### Gust's chunked zlib `.gz` files
 
 - **Symptom:** every frame black, the title screen included, while the game runs at full rate and draws (about 19,000 NVN calls a frame), with `[RED] shader … is not in the shader map` (26 keys in the first minute) and `program has no vertex shader`; the dumped shaders (`DM_NVN_SHDUMP`) match no file byte for byte, and some differ from a split shader only in the control section's compile information (+0x7d0), which is a sign of another GLSLC compile of the same source, not of a shared section.
@@ -248,6 +275,9 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Symptom:** archive or loose asset shaders are absent from the map; only boot shaders in `main` are found, sometimes reported as raw controls with no identified code area.
 - **Cause:** Monolith uses ARH1/ARD archives and XBC1 streams. HCPS shader containers live inside models, map streams and standalone shader files; a standalone SLCT in `main` omits the HCPS header.
 - **Fix:** `shader_split.py` reconstructs paths from the ARH1 XOR trie, reads bounded archive entries in parallel, and decodes stored/zlib/zstd XBC1 streams recursively. The ARH stored size excludes an XBC1 wrapper's 48 bytes. Decoded members are searched for both HCPS and complete GLSLC outputs (effect asset packs); compressed literals are visited only after decoding. HCPS's SLCT/NVSD descriptors locate each variant's control and code ranges; a vertex bundle can include geometry, so stages are split by each control's own lengths. Text-bearing controls advance at eight-byte alignment. Standalone SLCT sections use offsets relative to their own start. Source-only HCPS containers with empty code/control ranges hold no NVN binaries. Pairs stay within their program variant. Synthetic fixtures cover wrapper bounds, embedded geometry, variants, standalone offsets and compressed streams containing literal container magics.
+<!-- PEANUTS begin: nxnative ARH2 and mixed HCPS support for Xenoblade X DE. -->
+- **ARH2 and mixed HCPS:** ARH2 replaces paths with hashes and records disk sizes including the XBC1 wrapper. The reader accumulates aligned disk sizes, checks the index and each member against its data file, and shares the ARH1 extraction path. HCPS assets may contain both Maxwell and NVN2 programs; each control's version selects its length fields and stage decoder. Treating every control as Maxwell discards an archive job at a short NVN2 control. Synthetic fixtures cover both formats in one asset, alignment, empty members and invalid bounds. Adapted from nxnative `aa9e0ff71d93`; found on [Xenoblade Chronicles X: Definitive Edition](../../dm/games/0100453019AA8000/README.md#files-and-shaders).
+<!-- PEANUTS end -->
 - **Nested effect compression:** Firehawk WIPAC resources can wrap their `BlShaderArchive` GLSLC programs in `cmp\0zlib`: an eight-byte signature, little-endian stored/raw u32 lengths, then zlib. This layer lives inside the decoded XBC1 entry. The recursive reader checks both lengths and the end of the stream; it excludes these compressed ranges from raw container scans too. The four initially missing geometry/pixel keys and two additional vertex/pixel keys from Xenoblade Chronicles 3's opening match `/effect/fld/ma01a.wipac` after this decoding. Synthetic tests cover nested literal streams and incorrect sizes.
 - **Loose containers:** HCPS programs, XBC1 streams, DRSM model streams and compressed effect resources also occur outside ARH/ARD archives. Both the file scanner and nested-container scanner dispatch their headers to the same recursive decoder, before the generic shader-magic filter. Otherwise even a complete loose HCPS program is discarded. Synthetic file scans cover direct programs, compressed programs and several embedded streams, independent of filename suffix.
 - **Found on:** [Xenoblade Chronicles 3](../../dm/games/010074F013262000/README.md#files-and-shaders), whose note records the census and runtime key checks; [Xenoblade Chronicles 2](../../dm/games/0100E95004038000/README.md#files-and-shaders), with the same archive and standalone SLCT layouts on SDK 3.5.0; [Xenoblade Chronicles: Definitive Edition](../../dm/games/0100FF500E34A000/README.md#files-and-shaders), with loose containers.
@@ -385,6 +415,35 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **How it is stored:** the desktop renderer (`SF_GLSL_SWITCH`) with the same `LSLG` records, but no archive in the pak: the two libraries are IoStore shader libraries in `FFRS-Switch.ucas`, whose shader groups are Oodle-compressed as a whole ([01](../agents/01-extract.md)). Each shader entry packs its frequency (bits 0–3), group (4–33) and offset in the group's decoded bytes (from bit 34), and a shader runs to the next one's offset.
 - **Reader:** `uepak.py` writes them out as version 2 archives, so the split reads them as any other.
 - **Found on:** [FINAL FANTASY RESONANCE](../../dm/games/0100606026F12000/README.md) (Unreal Engine 5.6.1): 73,496 unique shaders (9,253 vertex, 61,305 pixel, 2,934 compute, 4 geometry).
+
+### Images whose handle is in the game's uniform buffer
+
+- **Symptom:** the Android library build fails compute shaders with `NotSupportedException: SUATOM handle in bank 3` (and `SURED handle in bank 3`), and its summary counts many more under `shaders with a binding whose slot was not decoded`, as `IMG cp_i_cb3_0_`, `cp_i_cb3_2_` … (`fp_i_cb3_…` in pixel shaders): images the replay would bind as null.
+- **Cause:** Unreal Engine 5.6 on the Switch 2 keeps the handle of every image a compute shader writes in the game's first uniform buffer, `c[3]` (bank 3), one 32-bit word each, and the shader reads it there, as `TEX_UBO`'s textures. The translator took the bank of a SULD's or SUST's handle (`ATexHandle`) but refused SUATOM and SURED with another bank than 2, and the Android ABI had no kind for an image named by a uniform buffer: `decode_tex` reads bank 2's image slots only.
+- **Fix:** three parts. The translator passes the bank on for SUATOM and SURED as for SULD and SUST (`InstEmitAmpereMem.cs` `ASuatom` / `ASured`, `InstEmitSurface.cs` `EmitSuatom` / `EmitSured`; upstream nxnative does the same). The library build files `<stage>_i<type>_cb<3..16>_<handle>` as `IMG_UBO` (`vk_android_build.py` `ubo_img`: uniform slot bank − 3, byte offset the handle's word × 4; flags `ATOMIC` and `RW` as `IMG`'s). The replay reads the handle at bind time and binds the storage image of its texture ID with the pool base, as `TEX_UBO` and upstream's Metal `IMGU` do (`vka_bind.c`). The kind moves `DMSH_VK_ABI`; the previous ABI is a row of `vka_abi_compat.h` with no differences, since none of its libraries holds the kind, so they keep playing until their update.
+- **Found on:** [Orbitals](../../dm/games/040032B023CA4000/README.md): 1,034 compute shaders refused (1,006 SUATOM, 28 SURED), 2,871 bindings with no slot in 2,820 compute, 50 pixel and 1 vertex shader (handles at `c[3]` words 0 to 0xE). With the fix, 7,044 `img_ubo` bindings and no binding without a slot.
+
+### An image write's coordinate lost by promote_locals
+
+- **Symptom:** the Android library build fails shaders with `spirv-val failed  error: line …: ID '…' has not been defined`, the undefined id the coordinate (or the image) of an `OpImageWrite`; the translator's own module validates.
+- **Cause:** `promote_locals` (`vk_android_spv.py`) replaces the loads of a single-store Function variable with the stored value, deletes the loads, and rewrites their uses with `_remap_operands`, which takes an instruction's ids from operand 3 unless its opcode is in `NO_RESULT_OPS`. `OpImageWrite` has no result, so its image and coordinate are operands 1 and 2, and it was not in the set: a coordinate kept in a local (the translator's temporary for a buffer image's index) lost its load. The same set tells the passes which instructions define their operand 2, so the write was also taken for the coordinate's definition.
+- **Fix:** `NO_RESULT_OPS` holds every instruction with no result and id operands the modules have: `OpImageWrite`, `OpCopyMemory`, `OpCopyMemorySized`, the geometry stream instructions, `OpAtomicStore`, `OpEmitMeshTasksEXT`, `OpSetMeshOutputsEXT` (`dm/gfx/tests/test_vk_image_ops.py` `PromoteImageWrite`).
+- **Found on:** [Orbitals](../../dm/games/040032B023CA4000/README.md): 189 compute shaders.
+
+### Shared memory with a buffer's array stride
+
+- **Symptom:** `spirv-val failed  error: line …: [VUID-StandaloneSpirv-None-10684] Invalid explicit layout decorations on type '…[%_arr_uint_uint_8]', the Workgroup storage class has an explicit layout from the ArrayStride decoration`, in the translator's own module.
+- **Cause:** the translator's SPIR-V generator reuses an identical type, so a shared (or local) memory of 8 words took the support buffer's `uint[8]`, which carries `ArrayStride 16`; Workgroup and Private variables may have no explicit layout.
+- **Fix:** shared and local memory arrays get a type of their own (`CodeGen/Spirv/Declarations.cs` `DeclareMemories`, `TypeArray(…, forceIdAllocation: true)`).
+- **Found on:** [Orbitals](../../dm/games/040032B023CA4000/README.md): 24 compute shaders.
+
+### A movie pak is mistaken for an Unreal shader archive
+<!-- PEANUTS: Unreal movie-only package detection. -->
+
+- **Symptom:** shader splitting stops with `there are no decoded shader code archives` even though the game's global shaders and material shaders are inline.
+- **Cause:** `uepak.inline_shaders` classified every readable nonempty pak without inline shaders as a shader archive. Movie and other asset paks therefore triggered a decode step with no shader archives to decode.
+- **Fix:** classify asset-only paks separately. The splitter and profile survey check explicitly for shader libraries in IoStore so a library remains discoverable beside an asset-only pak.
+- **Found on:** [Demon Slayer 2](../../dm/games/0100AD80208A8000/README.md#shaders).
 
 ### IoStore patch containers keep their shader groups in the base container
 
@@ -1759,6 +1818,13 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Fix:** the high bits of both offsets go in reserved fields, `dmsh_vk_module.off_hi` (bits 32-47) and `dmsh_vk_entry.c1_off_hi`, which are 0 in every smaller library, so those are written and read as before and the format stays version 1 ([android/SHADERS.md, Library format](../../android/SHADERS.md#library-format)). The replay reads them through `vka_shlib_mod_off` / `vka_shlib_c1_off`, the tools through `vk_android_delta.py` `mod_off` / `c1_off`; `c1_off_hi` is one of the positions the delta update's entry hash leaves out. `read_result` leaves the stored modules in their result files (`Stored`), `write_library` lays out the tables first and then copies the pieces one at a time, and `--check` maps the library. Checks: `t_android_shlib` (the high bits refused past a small blob, the offsets they give), `test_android_shader_delta` (`test_high_offset_bits`).
 - **Found on:** [Pokémon Pokopia](../../dm/games/0400A3A01EE4C000/README.md#found-on-this-game): the full library, 131,426 shaders.
 
+### Other versions' pixel shaders return during Android translation
+
+- **Symptom:** The Android build stops at 18%. The Vulkan builder requests more shaders than the launcher selected and reports the extra keys missing from the package. <!-- PEANUTS -->
+- **Cause:** A shared vertex shader can be paired with different pixel shaders across game updates. Expanding those pairs against the whole profile restored keys the split had already verified belonged to another version.
+- **Fix:** Both packers pass the validated missing keys to the Vulkan builder. It expands vertex dependencies within the remaining profile keys and checks the required records in the package.
+- **Found on:** [Super Mario Bros. Wonder](../../dm/games/010015100B514000/README.md#shaders) 1.2.1 and [Mario Kart 8 Deluxe](../../dm/games/0100152000022000/README.md#files-and-shaders) 4.0.0 and 4.0.1.
+
 ### A library with failed shaders passed as finished (Android)
 
 - **Symptom:** the phone's card says Ready, and the game draws black where shaders are missing (`[RED] vk: shader … is not in the shader library`); the shaders step's log lists failed shaders, but the step did not fail.
@@ -1774,6 +1840,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Fix:** a table of older ABIs the host also plays, outside the digest: `dm/gfx/vk_android/vka_abi_compat.h` (`674db0a4ff79` with `VKA_ABI_LOG_PAGES`). Its rows hold for the host ABI it names (`VKA_ABI_COMPAT_FOR`); when `DMSH_VK_ABI` moves again, no row is used until they are checked against the headers' diff and that line is raised (`t_android_shlib` and `test_android_shader_delta` fail meanwhile). `vka_shlib_check` takes a library of such an ABI as `by_abi` 2 with its differences; `lib_load` (`vka_shader.c`) plays one only when the pack has none of the host's own ABI, the newest, with a line naming the ABI. The write log's two formats are in `vka_gml.h`: each log buffer is allocated at the larger size, bound at the playing library's size (`vka_tex_gml_take`, and the fallback in `vka_draw.c` `gmem_log`), and `gml_poll` reads that format (pages back to 4 KiB opaque writes, as before a319e773). The launcher takes the list as `BuildConfig.NX_DMSH_VK_ABI_COMPAT` (`build.gradle`, empty when the table is for another ABI) and `ShaderLibs.playable` takes such a library after any of its own ABI ([android/SHADERS.md, Delta updates](../../android/SHADERS.md#delta-updates)). Checks: `t_android_shlib` (the table, `by_abi`, both log formats written as the modules write them), `test_android_shader_delta` (`test_compat_table_is_for_this_abi`, `test_playable_older_abi`).
 - **Open:** not run on the phone yet. Entry 0's sink must stay intact for the old modules: the hint loop in `gmem_map` also writes word 6 of entry 0 for a 2 MiB chunk whose number is a multiple of 8,192 (a guest address at a multiple of 16 GiB), which the new modules' sink needs fixed as well (being fixed on another branch).
 - **Found on:** [Donkey Kong Bananza](../../dm/games/040074A01BF12000/README.md#found-on-this-game): phones with the `v-d64f157175fd` library when the APKs of `228b73bd10f6` came.
+
+### The Mac host read the raw-memory write log in its old layout
+
+- **Symptom:** `make -C dm/host` stops at `nvn_mtl.m: use of undeclared identifier 'DMSH_GMEM_LOG_LOG2'`: the Mac host does not build, so neither the NSP script's heap check nor its address region check can run.
+- **Cause:** the change above made the write log a bitmap of pool-table entries (`dmsh_abi.h`, Ryujinx `GlobalToStorage.GmemLogCbOffset`) and removed `DMSH_GMEM_LOG_LOG2`; the Vulkan replay read it the new way (`vka_gml.h`), the Mac's `gml_read` still read a hash set of guest pages, so it would also have read the shaders' bits as page numbers.
+- **Fix:** `gml_read` reads the bitmap: each set bit names an entry of the pool table the draw was encoded with (`gml_take` keeps that table with the log), whose range gives the pool; the log cannot run out of slots any more, so its overflow handling is gone. The table carries no lookup hints, which the format allows (a hint of 0 makes the shader search).
+- **Check:** the Mac host builds and boots Super Mario Bros. Wonder's program 1 to its heap request and 15 s into `nnMain`; no game was played on the Mac with it.
+- **Found on:** [Super Mario Bros. Wonder - Nintendo Switch 2 Edition](../../dm/games/040015100B514001/README.md), whose heap check needed the Mac host.
 
 ### A shader package of another split gives shaders other shaders' code
 

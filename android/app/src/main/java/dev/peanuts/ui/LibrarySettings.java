@@ -19,6 +19,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.List;
 
 /**
  * Settings › Library (SPEC.md), the first section of Banana's Settings: the game, update and DLC folders, the keys (prod.keys, copied into files/keys and checked by
@@ -27,6 +28,7 @@ import java.io.OutputStream;
  * Home's first-run card and the sheet's Add keys….
  */
 public final class LibrarySettings {
+    static final String KEYS_FIRMWARE_GUIDANCE = "Firmware and keys should be the same version.";
     static final int REQ_KEYS = 60, REQ_GAME = 61, REQ_UPDATE_DIR = 62, REQ_DLC_DIR = 63, REQ_FIRMWARE = 64, REQ_SHEET_UPDATE = 65, REQ_SHEET_DLC = 66, REQ_FIRMWARE_ZIP = 67,
             REQ_BUILD_DIR = 68;
     /** dev.peanuts.settings.ModsSection's "Install mod…" (ACTION_OPEN_DOCUMENT_TREE / ACTION_OPEN_DOCUMENT), public: the section lives in another
@@ -34,7 +36,7 @@ public final class LibrarySettings {
     public static final int REQ_MOD_FOLDER = 69, REQ_MOD_ZIP = 70;
     private static final Handler UI = new Handler(Looper.getMainLooper());
     private static String fontsState;   // "Reading the firmware…" and what came of it, while the rows show
-    private static PUi.Setting gameRow, updateRow, dlcRow, keysRow, fontsRow, buildRow, companionsRow, hapticsRow, motionRow;
+    private static PUi.Setting gameRow, updateRow, dlcRow, keysRow, fontsRow, buildRow, companionsRow, hapticsRow, motionRow, swapRow, bottomRow, gamesRow;
     private static Activity rowsOf;
 
     private LibrarySettings() {}
@@ -42,14 +44,14 @@ public final class LibrarySettings {
     /** The section and its card, added to the Settings column before upstream's own sections */
     public static void add(Activity a, LinearLayout content) {
         rowsOf = a;
+        BottomScreen.page(a);   // bottom screen: logo
         PUi.add(content, PUi.section(a, "Library"), 16);
         LinearLayout card = PUi.add(content, PUi.listCard(a), 8);
         // a row that opens a picker or another screen ticks; Rescan, which acts at once, clicks (Haptics)
         gameRow = new PUi.Setting(a, "📁", "Game folder", Haptics.on(Haptics.Word.TICK, v -> pickFolder(a, REQ_GAME, "Pick your game folder"))).chevron(a);
         card.addView(gameRow.view);
-        buildRow = new PUi.Setting(a, "🗂️", "Build folder", Haptics.on(Haptics.Word.TICK, v -> pickFolder(a, REQ_BUILD_DIR, "Pick your build folder"))).chevron(a);
+        buildRow = new PUi.Setting(a, "🗂️", "Build folders", Haptics.on(Haptics.Word.TICK, v -> buildFolders(a))).chevron(a);
         card.addView(buildRow.view);
-        buildRow.view.setOnLongClickListener(v -> { PeanutsPrefs.buildDir(a, null); refreshRows(); Library.rescan(a); return true; });
         updateRow = new PUi.Setting(a, "⬆️", "Update folder", Haptics.on(Haptics.Word.TICK, v -> pickFolder(a, REQ_UPDATE_DIR, "Pick your update folder"))).chevron(a);
         card.addView(updateRow.view);
         updateRow.view.setOnLongClickListener(v -> { PeanutsPrefs.updateDir(a, null); refreshRows(); Library.rescan(a); return true; });
@@ -60,6 +62,7 @@ public final class LibrarySettings {
         card.addView(keysRow.view);
         fontsRow = new PUi.Setting(a, "🔤", "Firmware", Haptics.on(Haptics.Word.TICK, v -> pickFirmwareSource(a))).chevron(a);
         card.addView(fontsRow.view);
+        PUi.add(card, PUi.body(a, KEYS_FIRMWARE_GUIDANCE), 12);
         card.addView(new PUi.Setting(a, "🔄", "Rescan", Haptics.on(Haptics.Word.CLICK, v -> { Library.rescan(a); Toast.makeText(a, "Looking in the folders again", Toast.LENGTH_SHORT).show(); }))
                 .value("Reads the folders again").chevron(a).view);
         card.addView(new PUi.Setting(a, "🧹", "Free up space", Haptics.on(Haptics.Word.TICK, v -> freeUpSpace(a)))
@@ -80,6 +83,31 @@ public final class LibrarySettings {
             refreshRows();
         });
         card.addView(motionRow.view);
+        // Swap screens: only where there is a second display to swap with (dev.peanuts.Screens)
+        swapRow = null;
+        if (dev.peanuts.Companion.hasSecondDisplay(a)) {
+            swapRow = new PUi.Setting(a, "🔃", "Swap screens", v -> {
+                PeanutsPrefs.swapScreens(a, !PeanutsPrefs.swapScreens(a));
+                Haptics.play(v, Haptics.Word.CLICK);
+                refreshRows();
+            });
+            card.addView(swapRow.view);
+        }
+        // Bottom screen (BottomScreen)
+        bottomRow = new PUi.Setting(a, "📱", "Bottom screen", v -> {
+            PeanutsPrefs.bottomScreen(a, !PeanutsPrefs.bottomScreen(a));
+            BottomScreen.settingChanged();
+            Haptics.play(v, Haptics.Word.CLICK);
+            refreshRows();
+        });
+        card.addView(bottomRow.view);
+        gamesRow = new PUi.Setting(a, "🎮", "Games without a companion", v -> {
+            if (!PeanutsPrefs.bottomScreen(a)) { Haptics.play(v, Haptics.Word.REJECT); return; }
+            PeanutsPrefs.bottomScreenInGames(a, !PeanutsPrefs.bottomScreenInGames(a));
+            Haptics.play(v, Haptics.Word.CLICK);
+            refreshRows();
+        });
+        card.addView(gamesRow.view);
         companionsRow = new PUi.Setting(a, "🖥️", "Companions", Haptics.on(Haptics.Word.TICK, v -> a.startActivity(new Intent().setClassName(a.getPackageName(), "dev.peanuts.CatalogActivity"))))
                 .chevron(a);
         card.addView(companionsRow.view);
@@ -106,9 +134,9 @@ public final class LibrarySettings {
         if (a == null || gameRow == null) return;
         String g = PeanutsPrefs.gameDir(a), u = PeanutsPrefs.updateDir(a), d = PeanutsPrefs.dlcDir(a);
         gameRow.value(g != null ? g : "Not set. Every NSP, XCI, .nup and dump folder inside is shown on Home.");
-        String bd = PeanutsPrefs.buildDir(a);
-        buildRow.value(bd != null ? bd + " · hold to forget"
-                : "Beside the game (default). Pick a folder, on the phone or the microSD card, to keep every build there, one folder per game.");
+        List<String> builds = PeanutsPrefs.buildDirs(a);
+        buildRow.value(builds.isEmpty() ? "Add a folder on the phone or SD card"
+                : "Default: " + builds.get(0) + (builds.size() > 1 ? " · " + builds.size() + " folders" : ""));
         updateRow.value(u != null ? u + " · hold to forget" : "Optional. Another folder with update NSPs, matched to their games by title ID.");
         dlcRow.value(d != null ? d + " · hold to forget" : "Optional. Another folder with DLC NSPs, matched to their games by title ID.");
         keysRow.value(keysValue(a));
@@ -118,6 +146,18 @@ public final class LibrarySettings {
                 : "System: follows Android's touch feedback setting. Tap to turn the app's own haptics off.");
         if (motionRow != null) motionRow.value(PeanutsPrefs.motionReduced(a) ? "Reduced: fades and progress only. Tap to follow the system's animation setting again."
                 : "System: follows Android's animation setting. Tap for reduced motion (fades and progress only).");
+        if (swapRow != null) swapRow.value(PeanutsPrefs.swapScreens(a)
+                ? "On: games start on the other screen, the companion is on this one. Tap to swap back. Takes effect at the next game start."
+                : "Off: games start on this screen, the companion is on the other one. Tap to swap, for a clip-on top screen. Takes effect at the next game start.");
+        if (bottomRow != null) bottomRow.value(PeanutsPrefs.bottomScreen(a) ? "On: a second screen shows the game you are on, with Play and its page. Tap to leave that screen to Android."
+                : "Off: a second screen shows Android's own launcher while you are here. Tap to turn it on.");
+        if (gamesRow != null) {
+            boolean on = PeanutsPrefs.bottomScreen(a);
+            gamesRow.view.setAlpha(on ? 1f : 0.5f);
+            gamesRow.value(!on ? "Needs Bottom screen on."
+                    : PeanutsPrefs.bottomScreenInGames(a) ? "The game's cover stays on the second screen while you play. Tap to leave it to Android."
+                    : "Android's own screen while you play. Tap to keep the game's cover there.");
+        }
     }
 
     static String keysValue(Activity a) {
@@ -125,7 +165,27 @@ public final class LibrarySettings {
         return "prod.keys is in the app (" + PeanutsPrefs.keysFile(a).length() + " bytes)" + (ImporterPort.get().available() ? "" : " · the importer is not in this build");
     }
 
+    private static String firmwareTried;   // the firmware path a read was last started for by firmwareAfterAccess: once a path, not at every drawing of the row
+
+    /** A firmware folder or zip that is set but not read (picked before All files access was given, or the read failed for want of it): read now that the
+     * access is there. Called where the Firmware row gets its text, so coming back from Android's access page is enough */
+    private static void firmwareAfterAccess(Activity a) {
+        String fw = PeanutsPrefs.firmwareDir(a);
+        if (fw == null || !fw.startsWith("/") || fw.equals(firmwareTried) || PeanutsPrefs.hasFonts(a) || !Environment.isExternalStorageManager()) return;
+        if ("Reading the firmware…".equals(fontsState) || !new File(fw).exists()) return;
+        firmwareTried = fw;
+        extractFonts(a, fw, null);
+    }
+
+    /** The launcher is in front again (MainActivity.onResume): coming back from Android's All files access page reads a firmware that waited for it */
+    public static void resume(Activity a) {
+        if (fontsState != null && fontsState.startsWith("Waiting for file access") && Environment.isExternalStorageManager()) fontsState = null;
+        firmwareAfterAccess(a);
+        refreshRows();
+    }
+
     static String fontsValue(Activity a, String none) {
+        firmwareAfterAccess(a);
         String fw = PeanutsPrefs.firmwareDir(a);
         if (fontsState != null) return fontsState;
         if (PeanutsPrefs.hasFonts(a)) return "Firmware added" + (fw != null ? " from " + fw : "");
@@ -147,13 +207,25 @@ public final class LibrarySettings {
     // ---- Pickers ----
 
     /** The keys picker (Settings › Library › Keys, the first-run card, the sheet's Add keys…) */
-    public static void pickKeys(Activity a) { pickFile(a, REQ_KEYS, "Pick your prod.keys"); }
+    public static void pickKeys(Activity a) {
+        LinearLayout box = new LinearLayout(a);
+        box.setOrientation(LinearLayout.VERTICAL);
+        PUi.add(box, PUi.body(a, KEYS_FIRMWARE_GUIDANCE), 0);
+        PUi.sheet(a, "Firmware and keys", box)
+                .setPositiveButton("Choose keys", (d, w) -> pickFile(a, REQ_KEYS, "Pick your prod.keys"))
+                .setNegativeButton("Cancel", null).show();
+    }
 
     static void pickFile(Activity a, int request, String title) { pickFile(a, request, title, "*/*"); }
+
+    private static final String[] ZIP_TYPES = {"application/zip", "application/x-zip-compressed", "application/x-zip", "multipart/x-zip", "application/octet-stream"};
 
     static void pickFile(Activity a, int request, String title, String mime) {
         Toast.makeText(a, title, Toast.LENGTH_LONG).show();
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType(mime).addCategory(Intent.CATEGORY_OPENABLE);
+        // A zip is not application/zip on every phone: a file manager or a download can label it x-zip-compressed, x-zip or plain octet-stream, and the
+        // picker then greys it out so it cannot be chosen at all (GitHub issue #42 may be this). The importer says what a wrong file is
+        if ("application/zip".equals(mime)) i.setType("*/*").putExtra(Intent.EXTRA_MIME_TYPES, ZIP_TYPES);
         i.putExtra(DocumentsContract.EXTRA_INITIAL_URI, Uri.parse("content://com.android.externalstorage.documents/document/primary%3A"));
         a.startActivityForResult(i, request);
     }
@@ -165,6 +237,7 @@ public final class LibrarySettings {
         box.setOrientation(LinearLayout.VERTICAL);
         AlertDialog[] d = new AlertDialog[1];
         PUi.add(box, PUi.body(a, "Pick the folder your firmware is extracted into, or a firmware .zip (its NCA files flat inside, stored or deflated)."), 0);
+        PUi.add(box, PUi.body(a, KEYS_FIRMWARE_GUIDANCE), 12);
         PUi.add(box, new PUi.Setting(a, "📁", "Folder", v -> { d[0].dismiss(); pickFolder(a, REQ_FIRMWARE, "Pick your firmware folder"); }).chevron(a).view, 12);
         PUi.add(box, new PUi.Setting(a, "🗜️", "Zip file", v -> { d[0].dismiss(); pickFile(a, REQ_FIRMWARE_ZIP, "Pick your firmware zip", "application/zip"); }).chevron(a).view, 0);
         d[0] = PUi.sheet(a, "Firmware", box).setPositiveButton("Cancel", null).show();
@@ -178,8 +251,39 @@ public final class LibrarySettings {
         a.startActivityForResult(i, request);
     }
 
+    static void addBuildFolder(Activity a) { pickFolder(a, REQ_BUILD_DIR, "Pick a build folder"); }
+
+    private static void buildFolders(Activity a) {
+        List<String> dirs = PeanutsPrefs.buildDirs(a);
+        if (dirs.isEmpty()) { addBuildFolder(a); return; }
+        String[] labels = dirs.toArray(new String[0]);
+        labels[0] += " (default)";
+        new AlertDialog.Builder(a).setTitle("Build folders")
+                .setItems(labels, (dialog, which) -> {
+                    String dir = dirs.get(which);
+                    AlertDialog.Builder actions = new AlertDialog.Builder(a).setTitle(dir)
+                            .setNeutralButton("Forget folder", (d, w) -> {
+                                dirs.remove(dir);
+                                updateBuildFolders(a, dirs);
+                            }).setNegativeButton("Cancel", null);
+                    if (which != 0) actions.setPositiveButton("Make default", (d, w) -> {
+                        dirs.remove(dir);
+                        dirs.add(0, dir);
+                        updateBuildFolders(a, dirs);
+                    });
+                    actions.show();
+                }).setPositiveButton("Add folder…", (d, w) -> addBuildFolder(a)).setNegativeButton("Close", null).show();
+    }
+
+    private static void updateBuildFolders(Activity a, List<String> dirs) {
+        PeanutsPrefs.buildDirs(a, dirs);
+        refreshRows();
+        Library.rescan(a);
+    }
+
     /** MainActivity.onActivityResult's first line: true when the request was one of this package's (handled, whatever the result) */
     public static boolean result(Activity a, int request, int result, Intent data) {
+        if (BuildLogUi.result(a, request, result, data)) return true;   // Share build log's Save to a folder (REQ_SAVE 71)
         if (request < REQ_KEYS || request > REQ_MOD_ZIP) return false;
         if (result != Activity.RESULT_OK || data == null || data.getData() == null) return true;
         Uri u = data.getData();
@@ -196,9 +300,23 @@ public final class LibrarySettings {
         String p = Upstream.treeToPath(u);
         if (p == null) { error(a, "That folder is not on the phone's storage (a cloud provider, say). Pick one on the phone or its SD card."); return true; }
         switch (request) {
-            case REQ_FIRMWARE: PeanutsPrefs.firmwareDir(a, p); extractFonts(a, p, null); break;
+            case REQ_FIRMWARE:
+                PeanutsPrefs.firmwareDir(a, p);
+                // The importer opens the folder by its path, which needs All files access. Without it the read failed here, the dialog below asked for the
+                // access, and nothing read the firmware again once it was given: the row stayed at "not added" (GitHub issue #42). The read now waits for it
+                if (Environment.isExternalStorageManager()) extractFonts(a, p, null);
+                else { firmwareTried = null; fontsState = "Waiting for file access: allow All files access for the app, and the firmware is read."; }
+                break;
             case REQ_GAME: PeanutsPrefs.gameDir(a, p); break;
-            case REQ_BUILD_DIR: PeanutsPrefs.buildDir(a, p); break;
+            case REQ_BUILD_DIR: {
+                List<String> dirs = PeanutsPrefs.buildDirs(a);
+                if (!dirs.contains(p)) {
+                    dirs.add(p);
+                    PeanutsPrefs.buildDirs(a, dirs);
+                }
+                if (GameSheet.current != null) GameSheet.current.chooseBuildFolder(p);
+                break;
+            }
             case REQ_UPDATE_DIR: PeanutsPrefs.updateDir(a, p); break;
             case REQ_DLC_DIR: PeanutsPrefs.dlcDir(a, p); break;
             default: return true;
@@ -240,7 +358,7 @@ public final class LibrarySettings {
                 String err = imp.lastError();
                 UI.post(() -> {
                     if (r != 0) error(a, "The importer does not accept these keys: " + err + "\nThe file is kept; pick another to replace it.");
-                    else { Haptics.play(a.getWindow().getDecorView(), Haptics.Word.CLICK); Toast.makeText(a, "Keys accepted", Toast.LENGTH_SHORT).show(); }
+                    else { Haptics.play(a.getWindow().getDecorView(), Haptics.Word.CLICK); Toast.makeText(a, "Keys loaded", Toast.LENGTH_LONG).show(); }
                     keysLanded(a);
                 });
             }, "peanuts-keys").start();
@@ -248,6 +366,10 @@ public final class LibrarySettings {
     }
 
     private static void keysLanded(Activity a) {
+        // A firmware picked before the keys said "add your prod.keys first" and stayed so after the keys came, until it was picked a second time (seen on a
+        // fresh install; GitHub issue #42 reads like it): with keys in the app it is read now
+        if (PeanutsPrefs.hasKeys(a) && fontsState != null && fontsState.startsWith("Firmware not added: add your prod.keys")) { fontsState = null; firmwareTried = null; }
+        firmwareAfterAccess(a);
         refreshRows();
         if (GameSheet.current != null) GameSheet.current.keysChanged();
         Library.changed(a);
@@ -273,13 +395,14 @@ public final class LibrarySettings {
             // loaded" unless prod.keys had been picked in the same session), and a plain line when there are none
             if (!ImporterPort.ensureKeys(a)) {
                 if (deleteAfter != null) deleteAfter.delete();
-                UI.post(() -> { fontsState = "Firmware not added: add your prod.keys first (Keys, above), then choose the firmware again."; fontsLanded(a); });
+                UI.post(() -> { fontsState = "Firmware not added: add your prod.keys first (Keys, above). The firmware is read then; choose it again if it is not."; fontsLanded(a); });
                 return;
             }
             int r = imp.firmwareFonts(source, out.getPath());
             String err = imp.lastError();
             if (deleteAfter != null) deleteAfter.delete();
-            UI.post(() -> { fontsState = r == 0 ? null : "Firmware not added: " + err; fontsLanded(a); });
+            UI.post(() -> { fontsState = r == 0 ? null : "Firmware not added: " + err
+                    + "\n" + KEYS_FIRMWARE_GUIDANCE; fontsLanded(a); });
         }, "peanuts-fonts").start();
     }
 

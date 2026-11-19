@@ -19,7 +19,8 @@
 //           the GL depth rewrite under a bool specialization constant). Translated as compute and emitted as a TaskEXT / MeshEXT entry point (Ryujinx
 //           StructuredIr/MeshShaderInfo.cs, CodeGen/Spirv/SpirvMeshEntry.cs) }]
 //   Output: <key>.spv and <key>.res.json (offsets of storage buffer slots in c0, etc.; a mesh program's "mesh": its output locations, per vertex and per primitive; decoding texture handle → slot number is done in the script that builds the metallib;
-//           "shared_spill": {"bytes", "workgroup"} when the shared memory moved to a storage buffer (job shared_max); "fetch1d": the texture slots read by 1D integer fetches translated as wrapped 2D reads, see RecordTexelFetch1D)
+//           "shared_spill": {"bytes", "workgroup"} when the shared memory moved to a storage buffer (job shared_max); "fetch1d": the texture slots read by 1D integer fetches translated as wrapped 2D reads, see RecordTexelFetch1D;
+//           a texture's or an image's "tbx": a buffer texture's or buffer image's index in the offset table, TranslationFlags.MetalBufferImageBias (Apple jobs))
 using Ryujinx.Common.Memory;
 using Ryujinx.Graphics.Shader;
 using Ryujinx.Graphics.Shader.Translation;
@@ -81,6 +82,10 @@ static class SwshXlate
         public int[] QueryMeshShaderLayout() => _job["mesh"] is JsonArray m ? m.Select(v => (int)v).ToArray() : null;
         public int QueryMeshShaderTopology() => _job["mesh_topology"] is JsonNode mt ? (int)mt : 3;
         public int QueryMeshShaderGlDepthSpecId() => _job["gl_depth_spec"] is JsonNode n ? (int)n : -1;
+        public int QueryAmpereStageBank() => _job["stage_bank"] is JsonNode b ? (int)b : -1;   // an NVN2 graphics stage's own bank, its push block 1 + stage index (dmsh_build.py job_for)
+        public int[] QueryAmpereStageMemory() => _job["stage_memory"] is JsonArray l ? l.Select(v => (int)v).ToArray() : null;   // a task or mesh shader (dmsh_meshstage.py)
+        // Apple jobs (no "ssbo_align"): the Metal host binds storage buffers from bindless constant buffer handles and pushed addresses (NVN_RB_SBUFU / SBUFQ); Android's does not
+        public bool QueryHostStorageHandles() => _job["ssbo_align"] == null;
         public uint ConstantBuffer1Read(int offset) { if (offset >= 0 && offset + 4 <= _c1.Length) return BitConverter.ToUInt32(_c1, offset); Notes.Add($"c1 read out of bounds +{offset:X} (c1 length {_c1.Length})"); return 0; }
         // All resources go into set 0, each with a distinct binding number (spirv-cross emits them as one argument buffer); the translator's convention of giving the buffer of constant segment number index binding = index+1 is not relied on
         // The translator's own messages (a bindless read it resolved, or could not and removed, its result 0; an invalid encoding) go into the notes, marked, which dmsh_build.py counts apart
@@ -243,7 +248,8 @@ static class SwshXlate
                 byte[] code = File.ReadAllBytes((string)job["code"]);
                 var acc = new Accessor(code, job);
                 // Job debug = false: turn off DebugMode (DebugMode skips the AST optimizer and the output is full of temporaries; semantics unchanged)
-                var flags = TranslationFlags.MetalImageAtomics | (job["debug"] is JsonNode dbg && !(bool)dbg ? 0 : TranslationFlags.DebugMode) | ((string)job["stage"] switch { "cs" => TranslationFlags.Compute, "ts" => TranslationFlags.Compute | TranslationFlags.TaskShader, "ms" => TranslationFlags.Compute | TranslationFlags.MeshShader, _ => 0 }) | ((string)job["arch"] == "sm86" ? TranslationFlags.Ampere : 0);
+                // The Metal bounds flags read tables only the Metal host fills (dmsh_abi.h): Apple jobs only (Android jobs carry "ssbo_align")
+                var flags = TranslationFlags.MetalImageAtomics | (job["ssbo_align"] == null ? TranslationFlags.MetalUniformBounds | TranslationFlags.MetalBufferImageBias | TranslationFlags.MetalStorageBounds : 0) | (job["debug"] is JsonNode dbg && !(bool)dbg ? 0 : TranslationFlags.DebugMode) | ((string)job["stage"] switch { "cs" => TranslationFlags.Compute, "ts" => TranslationFlags.Compute | TranslationFlags.TaskShader, "ms" => TranslationFlags.Compute | TranslationFlags.MeshShader, _ => 0 }) | ((string)job["arch"] == "sm86" ? TranslationFlags.Ampere : 0);
                 var ctx = Translator.CreateContext(0, acc, new TranslationOptions(TargetLanguage.Spirv, TargetApi.Vulkan, flags));
                 bool geometry = job["geometry_topology"] != null;
                 ShaderProgram p = ctx.Translate(geometry);
@@ -268,7 +274,7 @@ static class SwshXlate
                     var reader = Translator.CreateContext(0, new Accessor(code, job, imageTypes, textureTypes), new TranslationOptions(TargetLanguage.Spirv, TargetApi.Vulkan, flags));
                     File.WriteAllBytes(Path.Combine(outDir, key + ".reader.spv"), reader.GenerateVertexPassthroughForCompute().BinaryCode);
                 }
-                File.WriteAllBytes(Path.Combine(outDir, key + ".spv"), VertexCounterLowering.Apply(code, (string)job["stage"], p.BinaryCode, acc.Notes));
+                File.WriteAllBytes(Path.Combine(outDir, key + ".spv"), VertexCounterLowering.Apply(code, (string)job["stage"], acc.QueryHostSubgroupSize(), p.BinaryCode, acc.Notes));
                 var res = new JsonObject
                 {
                     ["key"] = key, ["stage"] = (string)job["stage"], ["notes"] = new JsonArray(acc.Notes.ConvertAll(n => (JsonNode)n).ToArray()),
@@ -277,12 +283,17 @@ static class SwshXlate
                     ["uses_frag_coord"] = p.Info.UsesFragCoord, ["frag_out_map"] = p.Info.FragmentOutputMap,
                 };
                 if ((string)job["stage"] == "ms") res["mesh"] = MeshOutputs(job["mesh"].AsArray().Select(v => (int)v).ToArray());
-                foreach (var b in p.Info.CBuffers) res["cbufs"].AsArray().Add((JsonNode)new JsonObject { ["binding"] = b.Binding, ["slot"] = b.Slot });
-                foreach (var b in p.Info.SBuffers) res["sbufs"].AsArray().Add((JsonNode)new JsonObject { ["binding"] = b.Binding, ["slot"] = b.Slot, ["cb_slot"] = b.SbCbSlot, ["cb_offset"] = b.SbCbOffset, ["flags"] = (int)b.Flags });
+                foreach (var b in p.Info.CBuffers) res["cbufs"].AsArray().Add((JsonNode)new JsonObject { ["binding"] = b.Binding, ["slot"] = b.Slot, ["fixed"] = b.FixedSize });   // fixed: a game uniform slot's bytes read at fixed offsets (TranslationFlags.MetalUniformBounds), which the host makes readable
+                foreach (var b in p.Info.SBuffers) res["sbufs"].AsArray().Add((JsonNode)new JsonObject { ["binding"] = b.Binding, ["slot"] = b.Slot, ["cb_slot"] = b.SbCbSlot, ["cb_offset"] = b.SbCbOffset, ["flags"] = (int)b.Flags });   // flags: 1 written, 2 bounded by the length table (TranslationFlags.MetalStorageBounds; dmsh_reflect.py gives the binding its "sbx")
                 foreach (var (list, name) in new[] { (p.Info.Textures, "textures"), (p.Info.Images, "images") })
-                    foreach (var t in list) res[name].AsArray().Add((JsonNode)new JsonObject { ["binding"] = t.Binding, ["type"] = (int)t.Type, ["format"] = t.Format.ToString(), ["cbuf_slot"] = t.CbufSlot, ["handle"] = t.HandleIndex, ["array"] = t.ArrayLength, ["separate"] = t.Separate, ["flags"] = (int)t.Flags });
+                    foreach (var t in list)
+                    {
+                        var o = new JsonObject { ["binding"] = t.Binding, ["type"] = (int)t.Type, ["format"] = t.Format.ToString(), ["cbuf_slot"] = t.CbufSlot, ["handle"] = t.HandleIndex, ["array"] = t.ArrayLength, ["separate"] = t.Separate, ["flags"] = (int)t.Flags };
+                        if (t.BufferBias >= 0) o["tbx"] = t.BufferBias;   // a buffer image's or buffer texture's index in the offset table (TranslationFlags.MetalBufferImageBias; dmsh_reflect.py gives it to the binding, nvn_mtl.m tbuf_lead)
+                        res[name].AsArray().Add((JsonNode)o);
+                    }
                 if (acc.SharedSpill is (int slice, int wg)) res["shared_spill"] = new JsonObject { ["bytes"] = slice, ["workgroup"] = wg };
-                if (acc.Fetch1D.Count > 0) { var f1 = new JsonArray(); foreach (int h in acc.Fetch1D) f1.Add((JsonNode)h); res["fetch1d"] = f1; }
+                if (acc.Fetch1D.Count > 0) { var f1 = new JsonArray(); foreach (int h in acc.Fetch1D) f1.Add((JsonNode)JsonValue.Create(h)); res["fetch1d"] = f1; }
                 File.WriteAllText(Path.Combine(outDir, key + ".res.json"), res.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
                 ok++;
             }
@@ -302,20 +313,28 @@ static class VertexCounterLowering
 {
     const string InstanceCodeHash = "F5F4D23149565ACD852F6B7091F64CC8CB3AA019CCB33BA3F88CED62C6D1FF7B";
 
-    internal static byte[] Apply(byte[] code, string stage, byte[] spirv, List<string> notes)
+    internal static byte[] Apply(byte[] code, string stage, int subgroupSize, byte[] spirv, List<string> notes)
     {
         if (stage != "vs" || Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(code)) != InstanceCodeHash) return spirv;
         uint[] w = new uint[spirv.Length / 4]; Buffer.BlockCopy(spirv, 0, w, 0, spirv.Length);
         uint lane = 0, uintType = 0, vectorType = 0, trueId = 0; int ballots = 0, loads = 0;
+        // With 64 lanes the translator emits both ballot words and uses a lane read to
+        // select one. Lane zero selects the low word, whose singleton mask is 1.
+        int expected = subgroupSize == 64 ? 2 : 1;
         for (int i = 5; i < w.Length; i += (int)(w[i] >> 16))
         {
             uint op = w[i] & 65535;
             if (op == 71 && w[i + 2] == 11 && w[i + 3] == 41) lane = w[i + 1];   // OpDecorate BuiltIn SubgroupLocalInvocationId
             if (op == 21 && w[i + 2] == 32 && w[i + 3] == 0) uintType = w[i + 1];   // OpTypeInt 32 unsigned
             if (op == 41) trueId = w[i + 2];   // OpConstantTrue
-            if (op == 339) { vectorType = w[i + 1]; ballots++; if (w[i + 4] != trueId) throw new InvalidOperationException("visibility counter: ballot predicate changed"); }   // OpGroupNonUniformBallot
+            if (op == 339)   // OpGroupNonUniformBallot
+            {
+                if (w[i + 4] != trueId) throw new InvalidOperationException("visibility counter: ballot predicate changed");
+                if (ballots++ != 0 && vectorType != w[i + 1]) throw new InvalidOperationException("visibility counter: ballot type changed");
+                vectorType = w[i + 1];
+            }
         }
-        if (lane == 0 || uintType == 0 || vectorType == 0 || ballots != 1) throw new InvalidOperationException("visibility counter: SPIR-V shape changed");
+        if (lane == 0 || uintType == 0 || vectorType == 0 || ballots != expected) throw new InvalidOperationException("visibility counter: SPIR-V shape changed");
         uint zero = w[3]++, one = w[3]++, mask = w[3]++;   // new ids past the bound
         var result = new List<uint>(w.Length + 16); result.AddRange(w.AsSpan(0, 5).ToArray());
         bool constants = false;
@@ -331,7 +350,7 @@ static class VertexCounterLowering
             else if (op == 339) result.AddRange(new uint[] { (4u << 16) | 83, w[i + 1], w[i + 2], mask });   // ballot(true) -> OpCopyObject (1, 0, 0, 0)
             else result.AddRange(w.AsSpan(i, (int)(w[i] >> 16)).ToArray());
         }
-        if (loads != 1 || !constants) throw new InvalidOperationException("visibility counter: lane id use changed");
+        if (loads != expected || !constants) throw new InvalidOperationException("visibility counter: lane id use changed");
         notes.Add("visibility counter lowered to singleton groups (one atomic add per passing vertex)");
         byte[] output = new byte[result.Count * 4]; Buffer.BlockCopy(result.ToArray(), 0, output, 0, output.Length);
         return output;

@@ -182,6 +182,7 @@ final class Job {
     synchronized String name() { return o.optString("name"); }
     synchronized String titleId() { return o.optString("title_id"); }
     synchronized long version() { return o.optLong("version"); }
+    synchronized int packPid() { return o.optInt("pack_pid"); }   // PEANUTS: 0 for jobs saved before the worker PID was recorded
     synchronized long updated() { return o.optLong("updated"); }
     synchronized long created() { return o.optLong("created"); }
     synchronized File dump() { return new File(o.optString("dump")); }
@@ -215,6 +216,7 @@ final class Job {
     synchronized void state(String state, String reason, String error) {
         try {
             o.put("state", state).put("reason", reason == null ? "" : reason).put("error", error == null ? "" : error);
+            if ("running".equals(state)) o.put("pack_pid", android.os.Process.myPid());   // PEANUTS: only PackService marks a job running
             o.remove("reason_detail");
             o.remove("go_on");
             o.remove("error_detail");
@@ -270,6 +272,11 @@ final class Job {
     /** What a failed job's card offers (PrepareText.FIX_*): an older job, which had no "fix", gets Retry */
     synchronized String fix() { return o.optString("fix", PrepareText.FIX_RETRY); }
 
+    // PEANUTS: a concise diagnostic for the foreground card. Notifications still use statusText.
+    synchronized String failureSummary() {
+        return PrepareText.failureSummary(STEP_TEXT[current()], error(), o.optString("error_detail"));
+    }
+
     /** Details of a failed job: the technical part of why (an older job's whole message), and the game, version and folders */
     synchronized String errorDetail() {
         String d = "failed".equals(state()) ? PrepareText.failedDetail(error(), o.optString("error_detail"), o.has("fix")) : "";
@@ -300,6 +307,15 @@ final class Job {
     synchronized void shadersMissing(long n, long of) {
         try {
             o.put("shaders_missing", new JSONArray().put(n).put(of));
+        } catch (JSONException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** PEANUTS: keep the failed and total shader counts for the final build message. */
+    synchronized void shadersFailed(long n, long of) {
+        try {
+            o.put("shaders_failed", new JSONArray().put(n).put(of));
         } catch (JSONException e) {
             throw new IllegalStateException(e);
         }
@@ -634,15 +650,19 @@ final class Job {
         return new File(c.getNoBackupFilesDir(), "split.scan/" + titleId());
     }
 
-    /** PEANUTS: the shaders step's results (DMSH_VK_RESULTS), one file per shader, in the app's own storage: on shared storage each write goes through Android's FUSE
-     *  layer and the step ran at ~19 shaders a second with its workers waiting; here 248 (Pokémon Sword, AYN Thor) */
-    synchronized File xlate(Context c) {
-        return new File(c.getNoBackupFilesDir(), "xlate/" + titleId());
-    }
-
     /** PEANUTS: an Unreal game's decoded shader code archives (shader_split.py DM_UE_DECODE, ue_ondevice.py), in the app's own storage: the decode swaps its folder in by renaming */
     synchronized File ueShaders(Context c) {
         return new File(c.getNoBackupFilesDir(), "ue/" + titleId());
+    }
+
+    /** The shaders step's results (Outputs.results): in the app's own storage, one folder a game */
+    synchronized File results(Context c) {
+        return Outputs.results(dir(), c.getNoBackupFilesDir(), titleId());
+    }
+
+    /** Deletes the shaders step's results, wherever results() kept them */
+    synchronized void deleteResults(Context c) {
+        for (File f : Outputs.resultFolders(dir(), c.getNoBackupFilesDir(), titleId())) deleteTree(f);
     }
 
     /** Deletes a folder of the job's own outputs: ondevice/ paths, and the pack the job made itself (Ondevice's Manage, asked first; never the dump or the saves) */

@@ -43,12 +43,12 @@ public final class FrontendLaunch extends Activity {
             return;
         }
         File game = new File(Frontend.normal(path));
-        if (Nup.wrongCase(game)) { fail(game.getName() + ": rename it so that its name ends in \".nup\" (lower case); the game and the tools read only that name."); return; }
+        if (Nup.wrongCase(game)) { fail(game.getName() + ": rename it so that its name ends in \".nup\" or \".nsp\" (lower case); the game and the tools read only that name."); return; }
         if (!game.exists()) { fail(game + " is not there (the frontend sent " + path + ")."); return; }
         if (!game.canRead()) { fail(game + " cannot be read. Check that All files access is on."); return; }
         new Thread(() -> {
             String id = null, err = null;
-            try { id = Pack.titleIdOf(game); } catch (IOException e) { err = e.getMessage(); }   // a .nup's TOC is hashed: off the main thread
+            try { id = Pack.playableIdOf(game); } catch (IOException e) { err = e.getMessage(); }   // a .nup's TOC is hashed: off the main thread
             String fid = id, ferr = err;
             Game g = ferr == null ? ready(game, fid) : null;
             runOnUiThread(() -> {
@@ -144,6 +144,8 @@ public final class FrontendLaunch extends Activity {
     }
 
     private void play(Game g) {
+        // PEANUTS: use Home's launch warning and per-game driver picker when a choice is needed.
+        if (GpuDriver.launchesSystem(this, g.titleId)) { home(new File(g.gameDir)); return; }
         // PEANUTS begin: a shortcut or a frontend plays the build with mods too, as Home's Play does (MainActivity.launch): it started the normal pack, so a game
         // with code mods on ran without them (GitHub issue #12: a Luminescent Platinum save read by the unmodded game). The same rule as there: the variant when
         // it is built and fits, else the normal pack and a line that says so
@@ -158,8 +160,9 @@ public final class FrontendLaunch extends Activity {
             else android.widget.Toast.makeText(this, "The build with mods no longer fits this game: it starts without its code mods (hold the cover \u203a Game \u203a Mods \u203a Rebuild with mods)", android.widget.Toast.LENGTH_LONG).show();
         }
         // PEANUTS end
-        startActivity(new Intent(this, GameActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                .putExtra("title_id", g.titleId).putExtra("name", g.name).putExtra("game", g.gameDir).putExtra("pack", pack).putExtra("frontend", true));   // PEANUTS: pack, not g.packDir
+        Intent play = new Intent(this, GameActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .putExtra("title_id", g.titleId).putExtra("name", g.name).putExtra("game", g.gameDir).putExtra("pack", pack).putExtra("frontend", true);   // PEANUTS: pack, not g.packDir
+        dev.peanuts.Screens.startGame(this, play);   // PEANUTS: Swap screens falls back to the current display if Android refuses the other one (#131)
         dev.peanuts.GameReturn.remember(this, g.titleId, g.name, g.gameDir, pack);   // PEANUTS: the app's icon goes back to this game while it runs (GameReturn)
         finish();
     }

@@ -131,6 +131,8 @@ static const lock_t k_locks[] = {
     // this row the game keeps 30 fps at the right speed (the simulation at 60 and the regulator at 30: match clock as at 30). The game asks for present interval 2
     // (BaseDisplaySettings.PresentInterval), which the profile's present_interval display ignores
     { "a48c0de3bc353efa0e4d359bde05ef24", "FIFA frame regulator", 0xda20e38, 0x8, FPS_F64, 2, 0 },
+    // PEANUTS: 1.8d.6523: main+0x5d66b50 loads the regulator and writes both doubles at +0x8; main+0x9a09100 reads its rate from +0x8.
+    { "570dc9f1750fa7ea9df20b95b482d039", "FIFA frame regulator", 0xda450d8, 0x8, FPS_F64, 2, 0 },
 };
 #define NLOCKS ((int)(sizeof k_locks / sizeof k_locks[0]))
 // Fixed steps per frame, the profile's fps_steps rows (dm/games/game.py; one per main build): a framework at [main + global] then [that + each member], whose frame function picks
@@ -163,6 +165,49 @@ static const steps_row_t k_steps[] = DM_FPS_STEPS_ROWS;   // PEANUTS: the per-ti
 #define STEPS_MAX 3    // 20 fps: the most steps a frame offered (each 1/60 s)
 #define STEPS_HOLD 3   // a mode outside the game's 0..2: its pick then leaves the count the host wrote
 static int rd(uint64_t a, void *out, size_t n) { return a >= 0x1000 && !plat_mem_read(a, out, n); }
+// PEANUTS: preferred, reviewed Warehouse rows are build-gated and use the host presentation limiter's live target.
+#include "fpslocker_rows.h"
+static void fpslocker_store(uint64_t a, uint32_t value) {
+    uint32_t *p = (uint32_t *)(uintptr_t)a;
+    dm_guest_write_prepare(p, sizeof *p); __atomic_store_n(p, value, __ATOMIC_RELAXED);
+}
+static void fpslocker_store16(uint64_t a, uint16_t value) {
+    uint16_t *p = (uint16_t *)(uintptr_t)a;
+    dm_guest_write_prepare(p, sizeof *p); __atomic_store_n(p, value, __ATOMIC_RELAXED);
+}
+static void fpslocker_store64(uint64_t a, uint64_t value) {
+    uint64_t *p = (uint64_t *)(uintptr_t)a;
+    dm_guest_write_prepare(p, sizeof *p); __atomic_store_n(p, value, __ATOMIC_RELEASE);
+}
+static int limit_raw(void);
+__attribute__((weak)) int dm_fpslocker_plan_active(void) { return 0; }
+static struct fpw_rows g_fpw; static uint8_t *g_fpw_main,*g_fpw_aux; static uint64_t g_fpw_last;
+static int g_fpw_pair; static struct fpw_step_filter g_fpw_filter;
+static int fpslocker_effective(int fps) { return g_fpw_main ? fpw_effective_cap(&g_fpw,(uint64_t)(uintptr_t)g_fpw_main,(uint64_t)(uintptr_t)g_fpw_aux,fps,rd) : fps; }
+static int fpslocker_tick(void) {
+    static int state,logged;
+    if (!state) {
+        state=-1;const char *e=getenv("DM_FPSLOCKER");
+        if (!e || !*e) return dm_fpslocker_plan_active();
+        for (int i=0;i<g_nmod;i++) if (!strcmp(g_mod[i].name,"main")) {
+            int n=fpw_parse(e,g_mod[i].build_id,&g_fpw);
+            if (n>0) {
+                for (unsigned r=0;r<g_fpw.n;r++) if (g_fpw.row[r].kind==13) g_fpw_pair=1;
+                g_fpw_main=g_mod[i].base;
+                g_fpw_aux=g_mod[i].fpslocker_data_off?g_mod[i].base+g_mod[i].fpslocker_data_off:NULL;
+                state=1;LOG("main: reviewed FPS memory rows: %d reviewed memory rows for build %s",n,g_mod[i].build_id);
+            } else LOG("[RED] reviewed FPS memory rows: %s; no memory writes applied",n<0?"invalid reviewed rows":"main build does not match");
+        }
+    }
+    if (state<0) return dm_fpslocker_plan_active();
+    int fps=limit_raw();uint64_t now=now_ns();double elapsed=g_fpw_last?(double)(now-g_fpw_last)/1e9:0;g_fpw_last=now;
+    double pair_elapsed=elapsed;
+    if (g_fpw_pair && !fpw_step_filter_push(&g_fpw_filter,elapsed,&pair_elapsed)) pair_elapsed=0;
+    if (fpw_apply_context_storage(&g_fpw,(uint64_t)(uintptr_t)g_fpw_main,(uint64_t)(uintptr_t)g_fpw_aux,fps,elapsed,pair_elapsed,rd,fpslocker_store,fpslocker_store16,fpslocker_store64) && !logged) {
+        logged=1;LOG("main: reviewed FPS memory writes applied at %d fps; presentation limiter controls the live cap",fps);
+    }
+    return 1;
+}
 
 // NieR 1.0.3 exposes its preset minimum but ships fixed mode-specific fallbacks.
 // Keep the native current-scale and UV controller intact; only select its
@@ -590,7 +635,7 @@ static int fps_limit_start(void) {
     if (atomic_compare_exchange_strong(&g_fps_limit, &was, l)) { g_fps_limit_src = e ? "DM_FPS_LIMIT" : "game profile fps_limit"; if (l) LOG("main: frame limit %d fps (%s)", l, g_fps_limit_src); }
     return atomic_load(&g_fps_limit);
 }
-static int limit_raw(void) { int l = atomic_load(&g_fps_limit); if (l < 0) l = fps_limit_start(); return l > 0 ? l : 0; }
+static int limit_raw(void) { int l = atomic_load(&g_fps_limit); if (l < 0) l = fps_limit_start(); return fpslocker_effective(l > 0 ? l : 0); }
 // A game with a frame step (the rewriter's stubs, a state page: loader.c) steps its game time by the vsyncs the host hands it each frame (hle_nvn.c fstep_tick). The limiter
 // alone held such a game's frames to the limit while the game went on stepping by its own interval: Ocarina of Time (0400486024DEC000) kept interval 1 (1/60 s a frame) at
 // the profile's 30 fps limit and ran at half speed, and at 25 fps uncapped at 0.4. So for such a game the limit is the frame step's cap, in whole vsyncs: 60, 30 or 20 fps
@@ -599,11 +644,20 @@ static int limit_raw(void) { int l = atomic_load(&g_fps_limit); if (l < 0) l = f
 // before (a step of 4 vsyncs is not one the games' own logic uses). 0 = no limit, or no frame step. A framework's step count (a profile's fps_steps row, steps_tick) holds the limit the
 // same way: its steps a frame and its present interval are the limit's vsyncs
 static int limit_step(int l) { return l >= 60 ? 60 : l >= 30 ? 30 : l >= 20 ? 20 : 0; }
-int dm_fps_limit_step(void) { return dm_fps_state || steps_row() ? limit_step(limit_raw()) : 0; }
+// PEANUTS: Elapsed-time hooks do not quantize the rate to whole steps.
+int dm_fps_limit_step(void) { return (dm_fps_state && !dm_fps_elapsed_step()) || steps_row() ? limit_step(limit_raw()) : 0; }
 // The frame step's cap in the state page (+0, float; 0 = the stubs run the game's own logic): the frame rate cap (fps_target, the in-game panel's cap) and the frame limit's
 // step, whichever is lower. The stubs know 30 and 60 (several compare with 30.0): a 20 fps limit writes 30 there, and hle_nvn.c fps_step_cap takes the 20 from dm_fps_limit_step
 void dm_fps_step_fold(void) {
     if (!dm_fps_state) return;
+    // PEANUTS: Pass the selected cap to the elapsed-time hook.
+    if (dm_fps_elapsed_step()) {
+        int limit = limit_raw();
+        float rate = (float)(limit ? limit : dm_fps_target());
+        uint32_t bits; memcpy(&bits, &rate, sizeof bits);
+        __atomic_store_n((uint32_t *)dm_fps_state, bits, __ATOMIC_RELAXED);
+        return;
+    }
     uint32_t b = __atomic_load_n((uint32_t *)dm_fps_state, __ATOMIC_RELAXED); float was; memcpy(&was, &b, sizeof was);
     int t = dm_fps_target(), l = dm_fps_limit_step(), c = t == 30 || t == 60 ? t : 0;
     if (l && (!c || l < c)) c = l;
@@ -627,11 +681,14 @@ int nxhost_fps_decoupled(void) {
 static void fps_limit_wait(void) {
     if (!PLAT_ANDROID) return;   // only the Android launcher sets a frame limit
     int lim = limit_raw();
+    // PEANUTS: Preserve fixed-rate cinematics.
+    int fixed = dm_fps_elapsed_step() && (__atomic_load_n((const uint32_t *)(dm_fps_state + 0x24), __ATOMIC_RELAXED) || dm_movie_playing());
+    if (fixed) lim = 30;
     static uint64_t next;
     if (!lim || dm_fps_limit_step()) { next = 0; return; }   // none, or the frame step holds it (dm_fps_limit_step)
     uint64_t now = plat_abs_time(), period = 1000000000ull / (uint64_t)lim;   // the platform's monotonic clock and sleep (plat.h): clock_nanosleep is Linux only
     // PEANUTS: DM_VK_PACE_PANEL: a limit that is the panel's rate or a whole division of it ticks in the panel's measured refreshes (60 on a 59.83 Hz panel: 16.71 ms)
-    { uint64_t vka_panel_tick(uint64_t) __attribute__((weak)); if (&vka_panel_tick) period = vka_panel_tick(period); }
+    { uint64_t vka_panel_tick(uint64_t) __attribute__((weak)); if (!fixed && &vka_panel_tick) period = vka_panel_tick(period); }
     if (next > now && next - now <= period) { plat_wait_until(next); now = next; }
     next = (next > now || (next && now - next < period / 2) ? next : now) + period;   // keep the phase through small lateness, restart after a long frame
 }
@@ -682,6 +739,7 @@ static void steps_tick(const lock_t *L, int r, int target, const char *src) {
 void dm_fps_lock_tick(void) {
     fps_limit_wait();
     atomic_fetch_add_explicit(&g_presents, 1, memory_order_relaxed);   // sead_rate's frame count
+    if (fpslocker_tick()) return;   // PEANUTS: one engine-FPS method at a time
     dynamic_resolution_tick();   // separate from the FPS cap
     static int state = -2, nlog[NROWS], target, gen = -1, start_cap; static const char *src; static uint8_t over[NROWS];
     static uint32_t orig[NROWS][2]; static uint8_t have_orig[NROWS][2];   // what a row held before the host first wrote it: put back when the cap goes to 0 while the game runs

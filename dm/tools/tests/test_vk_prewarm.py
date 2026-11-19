@@ -1,7 +1,7 @@
 """dm/tools/vk_prewarm.py: prewarm lists (dm/gfx/vk_android/vka_pwlist.h) merged into a profile's seed, each record once in first-seen order, lists of another key
 layout refused; and dm/games/game.py seed, which compiles a profile's seed into the Android host's vk_prewarm_seed.h byte for byte."""
 import re
-import struct
+# PEANUTS(upstream-candidate): omit the unused struct import.
 import subprocess
 import sys
 import tempfile
@@ -54,6 +54,16 @@ class Formats(unittest.TestCase):
         _, _, recs = vk_prewarm.parse(lst([bytes(bad)]))
         self.assertEqual(recs, [], 'a record marked bad is left out')
 
+    def test_record_count_includes_bad_records(self):
+        # PEANUTS(upstream-candidate): stop at the declared count and require every declared record header.
+        bad = bytearray(rec(1, [1])); bad[1] = 1
+        good = rec(1, [2])
+        for magic in (vk_prewarm.MAGIC1, vk_prewarm.MAGIC2):
+            self.assertEqual(vk_prewarm.parse(lst([bad], magic=magic) + good)[2], [])
+            for missing in (1, len(good)):
+                with self.subTest(magic=magic, missing=missing), self.assertRaisesRegex(vk_prewarm.Error, 'header for record 2 of 2'):
+                    vk_prewarm.parse(lst([bad, good], magic=magic)[:-missing])
+
     def test_refusals(self):
         a = rec(0, [1], 16)
         with self.assertRaisesRegex(vk_prewarm.Error, 'key layout'):
@@ -83,7 +93,9 @@ class SeedHeader(unittest.TestCase):
         import game
         for g in game.all_games():
             text = game.seed_header(g)
-            n = int(re.search(r'dm_vk_prewarm_seed_len = (\d+);', text).group(1))
+            match = re.search(r'dm_vk_prewarm_seed_len = (\d+);', text)
+            assert match is not None   # PEANUTS(upstream-candidate): require the source pattern before reading it.
+            n = int(match.group(1))
             body = text.split('= {', 1)[1].split('};', 1)[0]
             vals = [int(x) for x in re.findall(r'\d+', body)]
             p = g.dir / game.SEED
