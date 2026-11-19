@@ -97,6 +97,9 @@ final class TouchControls extends View {
     private final Path path = new Path();
     private final RectF rect = new RectF();
 
+    /** The visual self-test is not a game: it follows the global touch skin. */
+    TouchControls(Context c, boolean input) { this(c, input, null); }
+
     TouchControls(Context c, boolean input, String titleId) {
         super(c);
         this.input = input;
@@ -162,7 +165,8 @@ final class TouchControls extends View {
     /** Switch without changing the host's A/B/X/Y input mapping or existing layout edits. */
     void setSkin(int style) {
         if (style == skinStyle) return;
-        skin(getContext(), gameTitleId, style);
+        if (gameTitleId == null || gameTitleId.isEmpty()) skin(getContext(), style);
+        else skin(getContext(), gameTitleId, style);
         skinStyle = style;
         prof = null; // reload the saved PlayStation layout, separate from the original Switch profile
         relayout();

@@ -34,6 +34,13 @@ jobs:
           yes | "$SDKMGR" --licenses >/dev/null || true
           "$SDKMGR" --install "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+      - name: Install fontTools for extended button glyphs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/font-env"
+          "$RUNNER_TEMP/font-env/bin/python" -m pip install "fonttools>=4.55,<5"
+          echo "$RUNNER_TEMP/font-env/bin" >> "$GITHUB_PATH"
       - name: Restore original real on-device packer (checksum verified)
         shell: bash
         run: |
