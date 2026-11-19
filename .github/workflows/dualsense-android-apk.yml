@@ -34,6 +34,13 @@ jobs:
           yes | "$SDKMGR" --licenses >/dev/null || true
           "$SDKMGR" --install "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+      - name: Install fontTools for extended button glyphs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/font-env"
+          "$RUNNER_TEMP/font-env/bin/python" -m pip install "fonttools>=4.55,<5"
+          echo "$RUNNER_TEMP/font-env/bin" >> "$GITHUB_PATH"
       - name: Restore original real on-device packer (checksum verified)
         shell: bash
         run: |
@@ -129,11 +136,21 @@ jobs:
           set -euo pipefail
           cd android/app
           chmod +x gradlew
-          ./gradlew --no-daemon assembleRelease \
+          for attempt in 1 2 3 4; do
+            if ./gradlew --no-daemon --refresh-dependencies assembleRelease \
             -PnxApp=peanuts -PnxRelease=true -PnxLabel='Peanuts Native' -PnxGenericHost=true \
             "-PnxGames=$NX_GAMES_CSV" \
             "-PnxPackStage=$NX_PACK_STAGE" -PnxPackEngine=native \
-            -PnxVersion=0.1.5 "-PnxVersionCode=$NX_VERSION_CODE" --stacktrace
+            -PnxVersion=0.1.5 "-PnxVersionCode=$NX_VERSION_CODE" --stacktrace; then
+              break
+            fi
+            if [ "$attempt" -eq 4 ]; then
+              echo "::error::Gradle compilation failed after four attempts"
+              exit 1
+            fi
+            echo "::warning::Gradle download or compilation failed; retrying with refreshed dependencies ($((attempt+1))/4)"
+            sleep 15
+          done
           mkdir -p out
           APK=$(find build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -1)
           test -n "$APK" && test -s "$APK"
@@ -143,11 +160,21 @@ jobs:
         run: |
           set -euo pipefail
           cd android/app
-          ./gradlew --no-daemon assembleRelease \
+          for attempt in 1 2 3 4; do
+            if ./gradlew --no-daemon --refresh-dependencies assembleRelease \
             -PnxApp=peanuts -PnxRelease=true -PnxAppId=peanutsds -PnxLabel="Peanuts Native DualSense" \
             -PnxGenericHost=true "-PnxGames=$NX_GAMES_CSV" \
             "-PnxPackStage=$NX_PACK_STAGE" -PnxPackEngine=native \
-            -PnxVersion=0.1.5-dualsense "-PnxVersionCode=$NX_VERSION_CODE" --stacktrace
+            -PnxVersion=0.1.5-dualsense "-PnxVersionCode=$NX_VERSION_CODE" --stacktrace; then
+              break
+            fi
+            if [ "$attempt" -eq 4 ]; then
+              echo "::error::Gradle compilation failed after four attempts"
+              exit 1
+            fi
+            echo "::warning::Gradle download or compilation failed; retrying with refreshed dependencies ($((attempt+1))/4)"
+            sleep 15
+          done
           APK=$(find build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -1)
           test -n "$APK" && test -s "$APK"
           cp "$APK" out/PeanutsNative-DualSense-side-by-side.apk
