@@ -86,115 +86,12 @@ jobs:
           SEEDS="$RUNNER_TEMP/release-prewarm-seeds"
           mkdir -p "$SEEDS"
           total=0
-          while IFS=        shell: bash
-        env:
-          SIGN_STORE_BASE64: ${{ secrets.PEANUTS_SIGN_STORE_B64 }}
-          SIGN_ALIAS: ${{ secrets.PEANUTS_SIGN_ALIAS }}
-          SIGN_PASSWORD: ${{ secrets.PEANUTS_SIGN_PASS }}
-        run: |
-          set -euo pipefail
-          # Deliberately fail closed: ephemeral signatures make the next APK
-          # incompatible with the previous installation, risking user data.
-          if [ -z "$SIGN_STORE_BASE64" ] || [ -z "$SIGN_ALIAS" ] || [ -z "$SIGN_PASSWORD" ]; then
-            echo "::error::Persistent signing is required. Configure all three repository Actions secrets: PEANUTS_SIGN_STORE_B64, PEANUTS_SIGN_ALIAS, PEANUTS_SIGN_PASS. See android/DUALSENSE_SIGNING.md, then run android/setup-fork-signing.ps1 on a trusted PC."
-            exit 1
-          fi
-          umask 077
-          KEYSTORE="$RUNNER_TEMP/peanuts-native-dualsense.p12"
-          printf '%s' "$SIGN_STORE_BASE64" | base64 --decode > "$KEYSTORE"
-          test -s "$KEYSTORE"
-          keytool -list -keystore "$KEYSTORE" -storepass "$SIGN_PASSWORD" -alias "$SIGN_ALIAS" >/dev/null
-          echo "NX_SIGN_STORE=$KEYSTORE" >> "$GITHUB_ENV"
-          echo "NX_SIGN_ALIAS=$SIGN_ALIAS" >> "$GITHUB_ENV"
-          echo "NX_SIGN_PASS=$SIGN_PASSWORD" >> "$GITHUB_ENV"
-          # The workflow run number increases for new releases; 200000 exceeds all previous fork test codes.
-          echo "NX_VERSION_CODE=$((200000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
-          echo "::notice::Using persistent private signer. Existing installations can update only if signed with its certificate."
-          keytool -list -v -keystore "$KEYSTORE" -storepass "$SIGN_PASSWORD" -alias "$SIGN_ALIAS" | grep -E 'SHA256:|SHA1:'
-      - name: Build same-ID APK (cannot overwrite official signer)
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd android/app
-          chmod +x gradlew
-          ./gradlew --no-daemon assembleRelease \
-            -PnxApp=peanuts -PnxRelease=true -PnxLabel='Peanuts Native' -PnxGenericHost=true \
-            "-PnxGames=$NX_GAMES_CSV" \
-            "-PnxPackStage=$NX_PACK_STAGE" -PnxPackEngine=native \
-            -PnxVersion=0.1.5 "-PnxVersionCode=$NX_VERSION_CODE" --stacktrace
-          mkdir -p out
-          APK=$(find build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -1)
-          test -n "$APK" && test -s "$APK"
-          cp "$APK" out/PeanutsNative-DualSense-same-package.apk
-      - name: Build side-by-side app (original stays installed)
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd android/app
-          ./gradlew --no-daemon assembleRelease \
-            -PnxApp=peanuts -PnxRelease=true -PnxAppId=peanutsds -PnxLabel="Peanuts Native DualSense" \
-            -PnxGenericHost=true "-PnxGames=$NX_GAMES_CSV" \
-            "-PnxPackStage=$NX_PACK_STAGE" -PnxPackEngine=native \
-            -PnxVersion=0.1.5-dualsense "-PnxVersionCode=$NX_VERSION_CODE" --stacktrace
-          APK=$(find build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -1)
-          test -n "$APK" && test -s "$APK"
-          cp "$APK" out/PeanutsNative-DualSense-side-by-side.apk
-      - name: Check real native packer and profile payloads in APKs
-        shell: bash
-        run: |
-          set -euo pipefail
-          for apk in android/app/out/PeanutsNative-DualSense-*.apk; do
-            echo "--- $apk"
-            du -h "$apk"
-            for lib in libpython3.14.so libnxpack.so libzbicdec.so libcra.so libdmsh_xlate.so libSPIRV-Tools-shared.so; do
-              unzip -Z1 "$apk" | grep -Fx "lib/arm64-v8a/$lib"
-            done
-            unzip -Z1 "$apk" | grep -Fx 'assets/pack/python.zip'
-            unzip -Z1 "$apk" | grep -Fx 'assets/pack/tools.zip'
-            unzip -Z1 "$apk" | grep -Fx 'assets/pack/version.txt'
-            unzip -Z1 "$apk" | grep -Fx 'classes.dex'
-          done
-      - name: Verify package IDs, signing certificates and version codes
-        shell: bash
-        run: |
-          set -euo pipefail
-          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
-          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
-          APK_DIR="android/app/out"
-          same="$APK_DIR/PeanutsNative-DualSense-same-package.apk"
-          side="$APK_DIR/PeanutsNative-DualSense-side-by-side.apk"
-          "$APKSIGNER" verify --verbose --print-certs "$same"
-          "$APKSIGNER" verify --verbose --print-certs "$side"
-          same_pkg=$("$AAPT" dump badging "$same" | sed -n '1p')
-          side_pkg=$("$AAPT" dump badging "$side" | sed -n '1p')
-          [[ "$same_pkg" == *"name='dev.nxnative.android.peanuts'"* ]]
-          [[ "$side_pkg" == *"name='dev.nxnative.android.peanutsds'"* ]]
-          [[ "$same_pkg" == *"versionName='0.1.5'"* ]]
-          [[ "$side_pkg" == *"versionName='0.1.5-dualsense'"* ]]
-          [[ "$same_pkg" == *"versionCode='$NX_VERSION_CODE'"* ]]
-          [[ "$side_pkg" == *"versionCode='$NX_VERSION_CODE'"* ]]
-          echo "$same_pkg"
-          echo "$side_pkg"
-          sha_of() {
-            "$APKSIGNER" verify --print-certs "$1" | sed -n 's/.*Signer #1 certificate SHA-256 digest: //p'
-          }
-          CERT1=$(sha_of "$same")
-          CERT2=$(sha_of "$side")
-          test -n "$CERT1"
-          test "$CERT1" = "$CERT2" || { echo "::error::APK signer mismatch"; exit 1; }
-          echo "::notice::Both APKs share one persistent signer fingerprint: $CERT1"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: PeanutsNative-v0.1.5-Fork-REAL-ARM64-APKs
-          path: android/app/out/PeanutsNative-DualSense-*.apk
-          if-no-files-found: error
-          retention-days: 14
-\t' read -r game digest extra; do
+          while read -r game digest; do
             [ -n "$game" ] || continue
             if grep -qx "$game" "$RUNNER_TEMP/config/games.txt"; then
               unzip -p "$APK" "assets/profiles/$game.seed" > "$SEEDS/$game.seed"
               test -s "$SEEDS/$game.seed" || { echo "::error::Missing release prewarm seed for $game"; exit 1; }
-              printf '%s  %s\n' "$digest" "$SEEDS/$game.seed" | sha256sum -c -
+              echo "$digest  $SEEDS/$game.seed" | sha256sum -c -
               total=$((total+1))
             fi
           done < peanuts/prewarm-sha256.tsv
