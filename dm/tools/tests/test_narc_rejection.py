@@ -24,7 +24,7 @@ def narc(*sections):
     struct.pack_into('<HH', d, 0xc, 0x10, len(sections))
     for magic, payload in sections:
         d += magic + struct.pack('<I', 8 + len(payload)) + payload
-    return d
+    return bytes(d)
 
 
 class NARCRejection(unittest.TestCase):
@@ -50,7 +50,7 @@ class NARCRejection(unittest.TestCase):
             ss.scan_blob(b'NARC', 'cut', [])
 
     def test_section_extends_beyond_archive(self):
-        d = narc((b'BTAF', struct.pack('<I', 0)), (b'GMIF', b''))
+        d = bytearray(narc((b'BTAF', struct.pack('<I', 0)), (b'GMIF', b'')))
         struct.pack_into('<I', d, 0x14, 0x1000)
         with self.assertRaisesRegex(SystemExit, r'^\[RED\] section: a section past the end'):
             ss.scan_blob(d, 'section', [])
