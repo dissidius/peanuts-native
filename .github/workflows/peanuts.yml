@@ -48,6 +48,7 @@ jobs:
       - name: Shader parser fuzz regressions (no game files)
         run: |
           python -m unittest -v dm/tools/tests/test_pacx4_bounds.py
+          python -m unittest -v dm/tools/tests/test_narc_rejection.py
           python -m unittest -v dm/tools/tests/test_fuzz_corpus.py
       - name: Profiles, runtime profile and runtime version
         run: |
