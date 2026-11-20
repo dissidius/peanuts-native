@@ -1,4 +1,4 @@
-# Upstream 0.1.5 + fork's selectable DualShock and DualSense skins.
+# Synced upstream development main (post-0.1.5) + fork DualShock/DualSense skins.
 # Unlike UI smoke tests this uses the REAL upstream ARM64 on-device packer.
 name: Peanuts Native Fork Android APK (upgrade-safe)
 on:
@@ -60,26 +60,28 @@ jobs:
           test -f "$RUNNER_TEMP/real-stage/python/lib/python3.14/site-packages/lz4/frame/_frame.cpython-314-aarch64-linux-android.so"
           python3 dm/gfx/tools/xlate_tree.py --check-lib "$RUNNER_TEMP/real-stage/lib/libdmsh_xlate.so"
           echo "NX_PACK_STAGE=$RUNNER_TEMP/real-stage" >> "$GITHUB_ENV"
-      - name: Match official 0.1.5 game catalog
+      - name: Build current upstream development game catalog
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/config"
           APK="$RUNNER_TEMP/upstream/PeanutsNative-0.1.5.apk"
-          # The gradle.properties default holds only seven bring-up profiles.
-          # Use the release APK's complete profile list, not the tiny default.
-          unzip -Z1 "$APK" | sed -n 's#^assets/profiles/\([0-9A-F]\{16\}\)\.profile\.bin$#\1#p' > "$RUNNER_TEMP/config/games.txt"
-          # The current official 0.1.5 release provides the complete catalog.
-          LC_ALL=C sort -u "$RUNNER_TEMP/config/games.txt" -o "$RUNNER_TEMP/config/games.txt"
-          echo "Game catalog in built APK:"
+          # Preserve ALL official 0.1.5 game IDs, while including newer
+          # development profiles from the synchronized upstream main.
+          unzip -Z1 "$APK" | sed -n 's#^assets/profiles/\([0-9A-F]\{16\}\)\.profile\.bin$#\1#p' > "$RUNNER_TEMP/config/official-games.txt"
+          LC_ALL=C sort -u "$RUNNER_TEMP/config/official-games.txt" -o "$RUNNER_TEMP/config/official-games.txt"
+          LC_ALL=C sort -u peanuts/release-titles.txt > "$RUNNER_TEMP/config/games.txt"
+          echo "Development profiles included: $(wc -l < "$RUNNER_TEMP/config/games.txt")"
           cat "$RUNNER_TEMP/config/games.txt"
-          if [ "$(wc -l < "$RUNNER_TEMP/config/games.txt")" -lt 17 ]; then
-            echo "::error::Official profile catalog extraction failed: refusing to ship incomplete game support"
-            exit 1
+          if [ "$(wc -l < "$RUNNER_TEMP/config/official-games.txt")" -lt 39 ]; then
+            echo "::error::Original release catalog extraction failed"; exit 1
+          fi
+          missing=$(comm -23 "$RUNNER_TEMP/config/official-games.txt" "$RUNNER_TEMP/config/games.txt")
+          if [ -n "$missing" ]; then
+            echo "::error::Development build excludes official titles: $missing"; exit 1
           fi
           if ! grep -qx 0100606026F12000 "$RUNNER_TEMP/config/games.txt"; then
-            echo "::error::FINAL FANTASY RESONANCE missing from built catalog"
-            exit 1
+            echo "::error::FINAL FANTASY RESONANCE missing from the build"; exit 1
           fi
           while read -r game; do
             test -f "dm/games/$game/game.tsv" || { echo "::error::Missing profile: $game"; exit 1; }
@@ -141,7 +143,7 @@ jobs:
             -PnxApp=peanuts -PnxRelease=true -PnxLabel='Peanuts Native' -PnxGenericHost=true \
             "-PnxGames=$NX_GAMES_CSV" \
             "-PnxPackStage=$NX_PACK_STAGE" -PnxPackEngine=native \
-            -PnxVersion=0.1.5 "-PnxVersionCode=$NX_VERSION_CODE" --stacktrace; then
+            -PnxVersion=0.1.5-dev-main "-PnxVersionCode=$NX_VERSION_CODE" --stacktrace; then
               break
             fi
             if [ "$attempt" -eq 4 ]; then
@@ -165,7 +167,7 @@ jobs:
             -PnxApp=peanuts -PnxRelease=true -PnxAppId=peanutsds -PnxLabel="Peanuts Native DualSense" \
             -PnxGenericHost=true "-PnxGames=$NX_GAMES_CSV" \
             "-PnxPackStage=$NX_PACK_STAGE" -PnxPackEngine=native \
-            -PnxVersion=0.1.5-dualsense "-PnxVersionCode=$NX_VERSION_CODE" --stacktrace; then
+            -PnxVersion=0.1.5-dev-main-dualsense "-PnxVersionCode=$NX_VERSION_CODE" --stacktrace; then
               break
             fi
             if [ "$attempt" -eq 4 ]; then
@@ -208,8 +210,8 @@ jobs:
           side_pkg=$("$AAPT" dump badging "$side" | sed -n '1p')
           [[ "$same_pkg" == *"name='dev.nxnative.android.peanuts'"* ]]
           [[ "$side_pkg" == *"name='dev.nxnative.android.peanutsds'"* ]]
-          [[ "$same_pkg" == *"versionName='0.1.5'"* ]]
-          [[ "$side_pkg" == *"versionName='0.1.5-dualsense'"* ]]
+          [[ "$same_pkg" == *"versionName='0.1.5-dev-main'"* ]]
+          [[ "$side_pkg" == *"versionName='0.1.5-dev-main-dualsense'"* ]]
           [[ "$same_pkg" == *"versionCode='$NX_VERSION_CODE'"* ]]
           [[ "$side_pkg" == *"versionCode='$NX_VERSION_CODE'"* ]]
           echo "$same_pkg"
@@ -224,7 +226,7 @@ jobs:
           echo "::notice::Both APKs share one persistent signer fingerprint: $CERT1"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: PeanutsNative-v0.1.5-Fork-REAL-ARM64-APKs
+          name: PeanutsNative-0.1.5-DevMain-Fork-SIGNED-ARM64-APKs
           path: android/app/out/PeanutsNative-DualSense-*.apk
           if-no-files-found: error
           retention-days: 14
