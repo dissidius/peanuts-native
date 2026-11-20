@@ -574,6 +574,12 @@ def glslc_shaders(d, label, need=True, skip=(), sink=None):
             if not sec or len(sec) != 1: continue
             (ctl, code), = sec; st = glslc_stage(ctl, code)
             if not st or check(label, st, ctl, code): continue
+        elif st == 'cs' and not code.startswith(CS_MAGIC):
+            # PEANUTS(upstream-candidate): Trails has a longer control section in the header; the shorter offset lands in constant data.
+            sec = glslc_section(d, h, size)
+            if sec and len(sec) == 1:
+                sc, sk = sec[0]
+                if sk.startswith(CS_MAGIC) and sc.startswith(ctl) and not check(label, st, sc, sk): ctl, code = sc, sk
         out.append((f'{label}#GLSLC@{h:#x}', st, ctl, code))
     if not out and need: red(f'{label}: no GLSLC output')
     return out
@@ -692,15 +698,18 @@ def pacx4_parts(d, label):
     names a shader type is opened: decompressed whole, the game's archives give 15.6 GB, and NeedleShader.pac is the only one with a Needle container or a control section in it.
     → (name, bytes) of the root and of each block"""
     roff, rstored, rlen = struct.unpack_from('<III', span(d, 0x10, 12, f'{label}: PACx 403 header'))
-    deps, ctab = struct.unpack_from('<II', d, 0x20)
-    n = struct.unpack_from('<I', span(d, 0x30 + deps, 4, f'{label}: PACx 403 root chunk table'))[0]
+    deps, ctab = field(d, '<II', 0x20, f'{label}: PACx 403 header')
+    # The count may fit the declared chunk table even when the file ends
+    # midway through an entry; validate the full table before unpacking.
+    table = span(d, 0x30 + deps, ctab, f'{label}: PACx 403 root chunk table')
+    n = field(table, '<I', 0, f'{label}: PACx 403 root chunk table')[0]
     if not n or 4 + 8 * n > ctab: red(f'{label}: PACx 403 root chunk count {n} in a table of {ctab:#x} bytes')
-    chunks = [struct.unpack_from('<II', d, 0x34 + deps + 8 * i) for i in range(n)]
+    chunks = [struct.unpack_from('<II', table, 4 + 8 * i) for i in range(n)]
     if sum(c for c, _ in chunks) != rstored: red(f'{label}: the PACx 403 root chunks do not add up to its stored length {rstored:#x}')
     root = pacx4_unchunk(d, roff, chunks, rlen, f'{label}: PACx 403 root')
     if root[:8] != PACX4_ROOT: red(f'{label}: the PACx 403 root is not a PACx 402 archive')
     if b'Shader' not in root: return []   # the type tree names no shader type (VertexShader, PixelShader, ComputeShader in NeedleShader.pac)
-    trees, info = struct.unpack_from('<II', root, 0x10)
+    trees, info = field(root, '<II', 0x10, f'{label}: PACx 402 root header')
     out = [('root', root)]
     if not info: return out
     nb, tab = struct.unpack_from('<QQ', span(root, 0x30 + trees, 16, f'{label}: PACx 403 block table'))
@@ -3106,7 +3115,12 @@ def scan_blob(d, label, out, depth=0, left=None):
         return
     if d[:4] == b'NARC':   # Camelot's containers (cra.py): each member packed by its first byte, so its size says nothing about the budget above
         import cra
-        for i, m in enumerate(cra.narc_members(d, label)): scan_blob(cra.undo(m), f'{label}/{i}', out, depth + 1)
+        try: members = cra.narc_members(d, label)
+        except cra.Error as e: red(str(e))   # malformed NARC: a named rejection, not an unexpected parser exception
+        for i, m in enumerate(members):
+            try: decoded = cra.undo(m)
+            except cra.Error as e: red(f'{label}/{i}: {e}')
+            scan_blob(decoded, f'{label}/{i}', out, depth + 1)
         return
     if d[:4] == b'BAHS': out.extend(bahs_shaders(d, label)); return
     if d[:4] == b'NDSR': out.extend(ndsr_shaders(d, label)); return
@@ -4176,10 +4190,10 @@ def profile_differs(t, pairsout, psopairsout, version=None):
         p = GAME.table(name)
         if text is None or not os.path.isfile(p): continue
         with open(p, encoding='utf-8', newline='') as f: want = absent_tables(name, f.read(), absent)
-        if version and name == 'pso_pairs.tsv':   # PEANUTS: some pairs exist only in another build even when both shader keys are shared
-            optional_pso = GAME.table('pso_pairs_optional.tsv')
-            if os.path.isfile(optional_pso):
-                with open(optional_pso, encoding='utf-8') as f:
+        if version and name in ('shader_pairs.tsv', 'pso_pairs.tsv'):   # PEANUTS: another build can pair two keys that are both present here
+            optional_pairs = GAME.table(name.removesuffix('.tsv') + '_optional.tsv')
+            if os.path.isfile(optional_pairs):
+                with open(optional_pairs, encoding='utf-8') as f:
                     may_lack = {ln.rstrip('\n').split('\t', 1)[1] for ln in f if ln.startswith(version + '\t')}
                 missing = may_lack.difference(tables_data(text))
                 want = ''.join(ln for ln in want.splitlines(keepends=True) if ln.rstrip('\r\n') not in missing)
