@@ -1,4 +1,4 @@
-# Synced upstream development main (post-0.1.5) + fork DualShock/DualSense skins.
+# Synced upstream development main (post-0.1.7) + fork DualShock/DualSense skins.
 # Unlike UI smoke tests this uses the REAL upstream ARM64 on-device packer.
 name: Peanuts Native Fork Android APK (upgrade-safe)
 on:
@@ -14,8 +14,8 @@ jobs:
     timeout-minutes: 85
     env:
       CI: 'true'
-      UPSTREAM_APK: https://github.com/igawa6/peanuts-native/releases/download/v0.1.5-1/PeanutsNative-0.1.5.apk
-      UPSTREAM_SHA256: eea340131f893b1040ea2f0b17e5e695bf34eec11c7dcc4c297ae0a0461fc38d
+      UPSTREAM_APK: https://github.com/igawa6/peanuts-native/releases/download/v0.1.7-1/PeanutsNative-0.1.7.apk
+      UPSTREAM_SHA256: 4df05e1fe440f98bfe6b7c1db8768e8265640740c843962af1d142c327c170cb
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,9 +46,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/upstream" "$RUNNER_TEMP/real-stage/lib" "$RUNNER_TEMP/real-stage/python"
-          curl -fL --retry 4 --connect-timeout 30 -o "$RUNNER_TEMP/upstream/PeanutsNative-0.1.5.apk" "$UPSTREAM_APK"
-          printf '%s  %s\n' "$UPSTREAM_SHA256" "$RUNNER_TEMP/upstream/PeanutsNative-0.1.5.apk" | sha256sum -c -
-          APK="$RUNNER_TEMP/upstream/PeanutsNative-0.1.5.apk"
+          curl -fL --retry 4 --connect-timeout 30 -o "$RUNNER_TEMP/upstream/PeanutsNative-0.1.7.apk" "$UPSTREAM_APK"
+          printf '%s  %s\n' "$UPSTREAM_SHA256" "$RUNNER_TEMP/upstream/PeanutsNative-0.1.7.apk" | sha256sum -c -
+          APK="$RUNNER_TEMP/upstream/PeanutsNative-0.1.7.apk"
           for lib in libpython3.14.so libnxpack.so libzbicdec.so libcra.so libdmsh_xlate.so libSPIRV-Tools-shared.so; do
             unzip -p "$APK" "lib/arm64-v8a/$lib" > "$RUNNER_TEMP/real-stage/lib/$lib"
             test -s "$RUNNER_TEMP/real-stage/lib/$lib"
@@ -65,15 +65,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/config"
-          APK="$RUNNER_TEMP/upstream/PeanutsNative-0.1.5.apk"
-          # Preserve ALL official 0.1.5 game IDs, while including newer
+          APK="$RUNNER_TEMP/upstream/PeanutsNative-0.1.7.apk"
+          # Preserve ALL official 0.1.7 game IDs, while including newer
           # development profiles from the synchronized upstream main.
           unzip -Z1 "$APK" | sed -n 's#^assets/profiles/\([0-9A-F]\{16\}\)\.profile\.bin$#\1#p' > "$RUNNER_TEMP/config/official-games.txt"
           LC_ALL=C sort -u "$RUNNER_TEMP/config/official-games.txt" -o "$RUNNER_TEMP/config/official-games.txt"
           LC_ALL=C sort -u peanuts/release-titles.txt > "$RUNNER_TEMP/config/games.txt"
           echo "Development profiles included: $(wc -l < "$RUNNER_TEMP/config/games.txt")"
           cat "$RUNNER_TEMP/config/games.txt"
-          if [ "$(wc -l < "$RUNNER_TEMP/config/official-games.txt")" -lt 39 ]; then
+          if [ "$(wc -l < "$RUNNER_TEMP/config/official-games.txt")" -lt 59 ]; then
             echo "::error::Original release catalog extraction failed"; exit 1
           fi
           missing=$(comm -23 "$RUNNER_TEMP/config/official-games.txt" "$RUNNER_TEMP/config/games.txt")
@@ -91,7 +91,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APK="$RUNNER_TEMP/upstream/PeanutsNative-0.1.5.apk"
+          APK="$RUNNER_TEMP/upstream/PeanutsNative-0.1.7.apk"
           SEEDS="$RUNNER_TEMP/release-prewarm-seeds"
           mkdir -p "$SEEDS"
           total=0
@@ -143,7 +143,7 @@ jobs:
             -PnxApp=peanuts -PnxRelease=true -PnxLabel='Peanuts Native' -PnxGenericHost=true \
             "-PnxGames=$NX_GAMES_CSV" \
             "-PnxPackStage=$NX_PACK_STAGE" -PnxPackEngine=native \
-            -PnxVersion=0.1.5-dev-main "-PnxVersionCode=$NX_VERSION_CODE" --stacktrace; then
+            -PnxVersion=0.1.7-dev-main "-PnxVersionCode=$NX_VERSION_CODE" --stacktrace; then
               break
             fi
             if [ "$attempt" -eq 4 ]; then
@@ -167,7 +167,7 @@ jobs:
             -PnxApp=peanuts -PnxRelease=true -PnxAppId=peanutsds -PnxLabel="Peanuts Native DualSense" \
             -PnxGenericHost=true "-PnxGames=$NX_GAMES_CSV" \
             "-PnxPackStage=$NX_PACK_STAGE" -PnxPackEngine=native \
-            -PnxVersion=0.1.5-dev-main-dualsense "-PnxVersionCode=$NX_VERSION_CODE" --stacktrace; then
+            -PnxVersion=0.1.7-dev-main-dualsense "-PnxVersionCode=$NX_VERSION_CODE" --stacktrace; then
               break
             fi
             if [ "$attempt" -eq 4 ]; then
@@ -210,8 +210,8 @@ jobs:
           side_pkg=$("$AAPT" dump badging "$side" | sed -n '1p')
           [[ "$same_pkg" == *"name='dev.nxnative.android.peanuts'"* ]]
           [[ "$side_pkg" == *"name='dev.nxnative.android.peanutsds'"* ]]
-          [[ "$same_pkg" == *"versionName='0.1.5-dev-main'"* ]]
-          [[ "$side_pkg" == *"versionName='0.1.5-dev-main-dualsense'"* ]]
+          [[ "$same_pkg" == *"versionName='0.1.7-dev-main'"* ]]
+          [[ "$side_pkg" == *"versionName='0.1.7-dev-main-dualsense'"* ]]
           [[ "$same_pkg" == *"versionCode='$NX_VERSION_CODE'"* ]]
           [[ "$side_pkg" == *"versionCode='$NX_VERSION_CODE'"* ]]
           echo "$same_pkg"
@@ -226,7 +226,7 @@ jobs:
           echo "::notice::Both APKs share one persistent signer fingerprint: $CERT1"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: PeanutsNative-0.1.5-DevMain-Fork-SIGNED-ARM64-APKs
+          name: PeanutsNative-0.1.7-DevMain-Fork-SIGNED-ARM64-APKs
           path: android/app/out/PeanutsNative-DualSense-*.apk
           if-no-files-found: error
           retention-days: 14
