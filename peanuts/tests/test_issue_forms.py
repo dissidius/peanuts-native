@@ -28,7 +28,7 @@ TYPES = {'markdown', 'textarea', 'input', 'dropdown', 'checkboxes'}
 LABELS = {'bug', 'app', 'new-game', 'feature-request'}   # labels the repository has; a label it lacks is dropped by GitHub without a word
 PROBLEM_FORMS = ('1_game_problem.yml', '2_build_problem.yml', '3_setup_problem.yml')
 # Words of the app the forms send players to (buttons, rows, settings, card labels): each must still be in the app's text
-APP_WORDS = ('Share build log', 'Share log', 'Save to a folder', 'Readiness check', 'Copy report', 'Ready, with limits', 'Not ready', 'Back up saves',
+APP_WORDS = ('Newest build', 'Newest game run', 'Share log', 'Save to a folder', 'Readiness check', 'Copy report', 'Ready, with limits', 'Not ready', 'Back up saves',
              'GPU driver', 'Swap screens', 'RAM saver', 'Frame generation', 'Frame rate cap', 'Game owned', 'Hold 60 fps', 'Dynamic resolution',
              'FSR sharpness', 'Upscaler', 'Use fast cores', 'Console mode', 'Advanced switches', 'Tester settings', 'Build again', 'Build anyway',
              'Wrong version', 'File gone', 'Not Supported Yet', 'Firmware', 'Keys', 'Restore saves', 'Import save')
@@ -71,7 +71,7 @@ class Catalog(unittest.TestCase):
         path = ROOT / 'peanuts/games.json'
         self.assertEqual(json.loads(path.read_text(encoding='utf-8'))['about'], self.catalog['about'])
         want = catalog_mod.outputs(warn=lambda m: None)
-        self.assertEqual(sorted(want), sorted(('peanuts/games.json',) + catalog_mod.READMES), 'a README lost its Supported games markers')
+        self.assertEqual(sorted(want), sorted(('peanuts/games.json', catalog_mod.APP_COPY) + catalog_mod.READMES), 'a README lost its Supported games markers')
         stale = [n for n, t in want.items() if (ROOT / n).read_text(encoding='utf-8') != t]
         if stale:
             self.skipTest(f'out of date: {", ".join(stale)} (a game, a version or a companion changed): catalog.yml writes them on main, or '
@@ -137,6 +137,12 @@ class Catalog(unittest.TestCase):
             self.assertIn('0100000000000002\tSecond Game\t\tyes', (root / 'peanuts/games.tsv').read_text(encoding='utf-8'))
             self.assertIn('not read', said[-1])
 
+            (root / 'peanuts/release-titles.txt').write_text('0100000000000001\n0100000000000002\n0100000000000003\n', encoding='utf-8')
+            (root / 'dm/games/0100000000000003').mkdir(parents=True)
+            (root / 'dm/games/0100000000000003/game.tsv').write_text('name\tThird Game\nbuild\tv65536\t1.0.1\n', encoding='utf-8')
+            catalog_mod.refresh(root, said.append, fetch=offline)   # a new row offline gets no companion value, not a 'no'
+            self.assertTrue((root / 'peanuts/games.tsv').read_text(encoding='utf-8').endswith('0100000000000003\tThird Game\n'))
+
 
 class IssueForms(unittest.TestCase):
     def setUp(self):
@@ -186,7 +192,7 @@ class IssueForms(unittest.TestCase):
         self.assertFalse(required(element(game, 'build_log')), 'not every game problem follows a build')
         build = self.forms['2_build_problem.yml']
         self.assertTrue(required(element(build, 'build_log')))
-        for w in ('Share build log', 'Save to a folder'):
+        for w in ('Share log', 'Newest build', 'Save to a folder'):
             self.assertIn(w, element(build, 'build_log')['attributes']['description'])
         self.assertTrue(required(element(self.forms['4_builder_problem.yml'], 'output')))
         # the log of another game came three times: a required checkbox asks for this game's

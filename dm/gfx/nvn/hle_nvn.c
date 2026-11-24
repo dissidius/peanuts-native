@@ -369,6 +369,11 @@ NVN(nvnMemoryPoolBuilderSetDefaults, void, NVNmemoryPoolBuilder *b) { memset(b, 
 NVN(nvnMemoryPoolBuilderSetDevice, void, NVNmemoryPoolBuilder *b, NVNdevice *d) { ((pool_builder_t *)b)->dev = d; }
 NVN(nvnMemoryPoolBuilderSetStorage, void, NVNmemoryPoolBuilder *b, void *m, size_t n) { ((pool_builder_t *)b)->mem = m; ((pool_builder_t *)b)->size = n; }
 NVN(nvnMemoryPoolBuilderSetFlags, void, NVNmemoryPoolBuilder *b, int f) { ((pool_builder_t *)b)->flags = f; }
+// PEANUTS(upstream-candidate): the pool builder's getters (New Pokemon Snap reads the pool and its size back)
+NVN_NOPROTO(nvnMemoryPoolBuilderGetDevice, NVNdevice *, const NVNmemoryPoolBuilder *b) { return ((const pool_builder_t *)b)->dev; }
+NVN_NOPROTO(nvnMemoryPoolBuilderGetMemory, void *, const NVNmemoryPoolBuilder *b) { return ((const pool_builder_t *)b)->mem; }
+NVN_NOPROTO(nvnMemoryPoolBuilderGetSize, size_t, const NVNmemoryPoolBuilder *b) { return ((const pool_builder_t *)b)->size; }
+NVN_NOPROTO(nvnMemoryPoolBuilderGetFlags, int, const NVNmemoryPoolBuilder *b) { return (int)((const pool_builder_t *)b)->flags; }
 static uint8_t *vpool_reserve(pool_t *o); static void vpool_release(pool_t *o);   // sparse virtual pools, see MapVirtual
 // Live pools, for threads that read a texture's pool after the game's call returned (the Vulkan replay). A registered texture keeps its pool's pointer, a guest address: the game
 // may finalize the pool and unmap the memory holding the pool object (and the texture's storage) while the texture ID is still registered and not yet written by the replay
@@ -725,7 +730,10 @@ static void ft_add(const tex_t *t) {
         (t->d.flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET | NVN_TEXTURE_FLAGS_COMPRESSIBLE))) return;
     pthread_mutex_lock(&g_ft_mu);
     if (g_nft == g_cft && !(g_ft = realloc(g_ft, (g_cft = g_cft ? 2 * g_cft : 1024) * sizeof *g_ft))) die("flush_tex allocation failed");
-    uint64_t st = nvn_dirty_now(); if (DM_GAME_TEX_DIRTY_UPLOAD) nvn_dirty_protect(t->mem, t->L.size);   // see nvn_ft_written
+    uint64_t st = nvn_dirty_now();
+#ifndef __ANDROID__   // PEANUTS: Android write-protects a tex_dirty_upload texture at its first use instead (vka_tex.c storage_mode, dirty_first)
+    if (DM_GAME_TEX_DIRTY_UPLOAD) nvn_dirty_protect(t->mem, t->L.size);   // see nvn_ft_written
+#endif
     g_ft[g_nft++] = (flush_tex){t->mem, t->L.size, *t, st, nvn_dirty_span(t->mem, t->L.size)};
     pthread_mutex_unlock(&g_ft_mu);
 }
@@ -764,6 +772,9 @@ int nvn_ft_tracked(uint64_t serial) {   // registered and not resolved yet: its 
 // Checking every texture at every submission cost TOTK 0.4 ms of submit CPU per frame on the Mac; this way a texture is picked up a few submissions later at most
 enum { FT_POLL_BYTES = 128 << 20 };
 void nvn_ft_poll(void) {
+#ifdef __ANDROID__   // PEANUTS: nothing protected at registration on Android, so nothing to poll
+    return;   // Android tracks tex_dirty_upload from first use in vka_tex.c (avoids pre-fill SIGSEGV faults and redundant re-uploads)
+#else
     if (!DM_GAME_TEX_DIRTY_UPLOAD) return;
     static uint64_t gen; static size_t cur, left;
     static tex_t *hit; static size_t chit; size_t nhit = 0;
@@ -780,6 +791,7 @@ void nvn_ft_poll(void) {
     }
     pthread_mutex_unlock(&g_ft_mu);
     for (size_t i = 0; i < nhit; i++) if (!mtl_tex_gpu_owned(hit[i].serial)) mtl_tex_cpu_written(&hit[i]);   // outside g_ft_mu: the ownership check takes the replay's serial table lock
+#endif   // PEANUTS
 }
 static void ft_flush(const uint8_t *a, uint64_t n) {
     if (!DM_GAME_TEX_FLUSH_UPLOAD || !a || !n) return;
@@ -1051,6 +1063,9 @@ static int keys_hash(const NVNshaderData *sd, int mapped, uint8_t out[8]) {
 // PEANUTS: the Android replay notes what a shader's control section says it captures by transform feedback (vka_tf.c), where the shader's key is made: the section
 // is only guaranteed valid during SetShaders
 __attribute__((weak)) void nvn_tf_ctl_note(const uint8_t key[8], const void *control) { (void)key; (void)control; }
+// PEANUTS: whether nvnProgramSetShaders made the stage's key (prog_key would otherwise hash the stage's code now, which is not known to be readable or
+// written yet at that time: the reason the key is left to the first draw). For the Android replay's program list (vka_shader.c mtl_prog_prefetch)
+int prog_key_ready(const prog_t *p, unsigned st) { if (st >= p->nstage) return 0; prog_keys_t *k = pk_get(p, 0); return k && (k->ok >> st & 1); }
 int prog_key(const prog_t *p, unsigned st, uint8_t key[8]) {
     if (st >= p->nstage) return 0;
     prog_keys_t *k = pk_get(p, 1);
@@ -1322,12 +1337,18 @@ NVN(nvnCommandBufferIsRecording, NVNboolean, const NVNcommandBuffer *c) { return
 // PEANUTS begin: CopyCommands copies, as in NVN. The game may record over the source's command memory as soon as the copy is made; a CALL into it, read a frame
 // later by the Android replay worker, found other records there (Unicorn Overlord: a record size of pixel data, then a jump into unmapped memory). Inline replay
 // read the CALL at submit time, before the game reused the memory. The source's records are copied into this buffer up to its END, across its JUMPs.
+// The largest record the host records: an uniform update of the NVN limit (64 KiB) and its header. A larger size is stale memory, never a record
+enum { CMD_COPY_REC_MAX = (64 << 10) + 64 };
 static void cmd_copy_list(cmd_t *o, const uint8_t *s) {
     for (unsigned n = 0; s && n < (1u << 22); n++) {
+        if (dm_guest_unmapped((uintptr_t)s, 16)) {   // a jump (or a stale handle) into a page the guest has not mapped: reading it would fault
+            static int once; if (!once++) LOG("[RED] CopyCommands: record %u of the source list at %p is in memory the guest has not mapped: the copy stops there", n, (const void *)s);
+            return;
+        }
         op_hdr h; memcpy(&h, s, sizeof h);
         if (h.op == OP_END) return;
         if (h.op == OP_JUMP && h.size >= 16) { memcpy(&s, s + 8, 8); continue; }
-        if (h.size < 8 || (h.size & 7) || h.op >= OP_COUNT_) {
+        if (h.size < 8 || (h.size & 7) || h.op >= OP_COUNT_ || h.size > CMD_COPY_REC_MAX || dm_guest_unmapped((uintptr_t)s, h.size)) {
             static int once; if (!once++) LOG("[RED] CopyCommands: record %u of the source list at %p is not a record (op %u, size %u): the copy stops there", n, (const void *)s, h.op, h.size);
             return;
         }
@@ -2790,6 +2811,19 @@ NVN(nvnSamplerGetCompare, void, const NVNsampler *s, NVNcompareMode *m, NVNcompa
 NVN(nvnSamplerGetBorderColor, void, const NVNsampler *s, float *c) { memcpy(c, SP(s)->border, 16); }
 NVN(nvnSamplerGetMaxAnisotropy, float, const NVNsampler *s) { return SP(s)->aniso; }
 NVN(nvnSamplerGetReductionFilter, NVNsamplerReduction, const NVNsampler *s) { return (NVNsamplerReduction)SP(s)->reduction; }
+// PEANUTS begin(upstream-candidate): the builder's getters for the rest of its parameters. Digimon Story Time Stranger reads the whole builder back (about 6,100 calls before its
+// first scene) and used the unset outputs: CRASH addr=0 at main+0xbc13f0. The integer border colours return what SetBorderColori / ui stored (as numbers, see there)
+NVN(nvnSamplerBuilderGetLodBias, float, const NVNsamplerBuilder *b) { return ((const samp_builder_t *)b)->p.lod_bias; }
+NVN(nvnSamplerBuilderGetCompare, void, const NVNsamplerBuilder *b, NVNcompareMode *m, NVNcompareFunc *f) {
+    const samp_par *o = &((const samp_builder_t *)b)->p; *m = (NVNcompareMode)o->cmp_mode; *f = (NVNcompareFunc)o->cmp_func;
+}
+NVN(nvnSamplerBuilderGetBorderColor, void, const NVNsamplerBuilder *b, float *c) { memcpy(c, ((const samp_builder_t *)b)->p.border, 16); }
+NVN(nvnSamplerBuilderGetBorderColori, void, const NVNsamplerBuilder *b, int *c) { for (int i = 0; i < 4; i++) c[i] = (int)((const samp_builder_t *)b)->p.border[i]; }
+NVN(nvnSamplerBuilderGetBorderColorui, void, const NVNsamplerBuilder *b, uint32_t *c) { for (int i = 0; i < 4; i++) c[i] = (uint32_t)((const samp_builder_t *)b)->p.border[i]; }
+NVN(nvnSamplerBuilderGetMaxAnisotropy, float, const NVNsamplerBuilder *b) { return ((const samp_builder_t *)b)->p.aniso; }
+NVN(nvnSamplerBuilderGetReductionFilter, NVNsamplerReduction, const NVNsamplerBuilder *b) { return (NVNsamplerReduction)((const samp_builder_t *)b)->p.reduction; }
+NVN(nvnSamplerBuilderGetLodSnap, float, const NVNsamplerBuilder *b) { (void)b; return 0.f; }   // SetLodSnap is ignored (no Metal or Vulkan equivalent), so the default, 0
+// PEANUTS end
 // whether two samplers have the same state (games use it to deduplicate sampler pool entries)
 NVN(nvnSamplerCompare, NVNboolean, const NVNsampler *a, const NVNsampler *b) {
     const samp_par *x = SP(a), *y = SP(b);

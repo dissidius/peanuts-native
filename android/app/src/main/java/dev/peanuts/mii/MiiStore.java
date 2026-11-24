@@ -17,7 +17,7 @@ import java.util.Map;
 import java.util.Random;
 
 /**
- * The player's own Miis (Settings › Miis): each one a name, a create ID and the fields of a console CharInfo (nn::mii, 0x58 bytes), kept in files/mii/miis.tsv. Every
+ * The player's own Miis (Settings › Users › Miis): each one a name, a create ID and the fields of a console CharInfo (nn::mii, 0x58 bytes), kept in files/mii/miis.tsv. Every
  * save also writes files/mii/database.bin for the host ("PNMII1\0\0", a u32 count, the CharInfo records; dm/host/hle_mii.c reads it as DM_MII_DB), where games list
  * these Miis as the console's own. The ranges are the ones CharInfoRaw::Verify checks; a value outside them is clamped, so a game never refuses a Mii.
  * No Android classes: MiiStoreJvmTest runs it on the JVM.
@@ -123,7 +123,7 @@ public final class MiiStore {
         for (String k : new String[]{"gender", "favorite_color", "faceline_type", "faceline_color", "hair_type", "hair_flip", "eye_type", "eyebrow_type", "nose_type", "mouth_type"}) {
             Field fd = field(k); m.set(k, fd.min + r.nextInt(fd.max - fd.min + 1));
         }
-        for (String k : new String[]{"hair_color", "eyebrow_color"}) m.set(k, r.nextInt(8));   // the classic hair colours (common colours 0 to 7)
+        m.set("hair_color", r.nextInt(8));                                                      // the classic hair colours (common colours 0 to 7)
         m.set("eyebrow_color", m.get("hair_color"));
         m.set("eye_color", 8 + r.nextInt(6));                                                   // the classic eye colours (8 to 13)
         m.set("height", 32 + r.nextInt(64)); m.set("build", 32 + r.nextInt(64));
@@ -132,9 +132,30 @@ public final class MiiStore {
 
     /** At most 10 characters, not empty (CharInfo's nickname: UTF-16, NUL-terminated, the first character not NUL) */
     public static String cleanName(String s) {
-        String t = s == null ? "" : s.replace('\t', ' ').replace('\n', ' ').trim();
+        String t = s == null ? "" : s.replace('\t', ' ').replace('\n', ' ').replace('\r', ' ').trim();
         if (t.isEmpty()) t = "Mii";
-        return t.length() > NAME_MAX ? t.substring(0, NAME_MAX) : t;
+        if (t.length() > NAME_MAX) {
+            t = t.substring(0, NAME_MAX);
+            if (Character.isHighSurrogate(t.charAt(t.length() - 1))) t = t.substring(0, t.length() - 1);   // never half a surrogate pair
+        }
+        return t;
+    }
+
+    /** The name of a duplicate: the name and " 2", the name cut short so the 2 still fits and the copy reads differently */
+    public static String copyName(String name) {
+        String base = cleanName(name);
+        if (base.length() > NAME_MAX - 2) {
+            base = base.substring(0, NAME_MAX - 2);
+            if (Character.isHighSurrogate(base.charAt(base.length() - 1))) base = base.substring(0, base.length() - 1);   // never half a surrogate pair
+        }
+        return cleanName(base + " 2");
+    }
+
+    /** A create ID as 32 lower-case hex digits (miis.tsv's first column; a profile picture names its Mii by it) */
+    public static String hex(byte[] id) {
+        StringBuilder b = new StringBuilder();
+        for (byte x : id) b.append(String.format(Locale.ROOT, "%02x", x & 0xff));
+        return b.toString();
     }
 
     private static final SecureRandom RNG = new SecureRandom();
@@ -167,13 +188,15 @@ public final class MiiStore {
             for (String line : Files.readAllLines(f.toPath(), StandardCharsets.UTF_8)) {
                 String[] c = line.split("\t", -1);
                 if (c.length < 3 || c[0].length() != 32) continue;
-                byte[] id = new byte[16];
-                for (int i = 0; i < 16; i++) id[i] = (byte) Integer.parseInt(c[0].substring(2 * i, 2 * i + 2), 16);
-                Mii m = new Mii(cleanName(c[1]), id);
-                int[] d = DEFAULTS[0];
-                for (int i = 0; i < FIELDS.size(); i++) m.set(FIELDS.get(i).key, d[i]);   // a field the file lacks keeps the default's value
-                for (String kv : c[2].split(",")) { int e = kv.indexOf('='); if (e > 0) try { m.set(kv.substring(0, e), Integer.parseInt(kv.substring(e + 1))); } catch (NumberFormatException ignored) { } }
-                out.add(m);
+                try {
+                    byte[] id = new byte[16];
+                    for (int i = 0; i < 16; i++) id[i] = (byte) Integer.parseInt(c[0].substring(2 * i, 2 * i + 2), 16);
+                    Mii m = new Mii(cleanName(c[1]), id);
+                    int[] d = DEFAULTS[0];
+                    for (int i = 0; i < FIELDS.size(); i++) m.set(FIELDS.get(i).key, d[i]);   // a field the file lacks keeps the default's value
+                    for (String kv : c[2].split(",")) { int e = kv.indexOf('='); if (e > 0) try { m.set(kv.substring(0, e), Integer.parseInt(kv.substring(e + 1))); } catch (NumberFormatException ignored) { } }
+                    out.add(m);
+                } catch (NumberFormatException e) { continue; }   // one bad create ID skips only its line
                 if (out.size() == MAX_MIIS) break;
             }
         } catch (IOException | RuntimeException e) { /* an unreadable file is an empty list */ }
@@ -191,9 +214,7 @@ public final class MiiStore {
         db.write(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(n).array());
         for (int i = 0; i < n; i++) {
             Mii m = miis.get(i);
-            StringBuilder hex = new StringBuilder();
-            for (byte x : m.createId) hex.append(String.format(Locale.ROOT, "%02x", x & 0xff));
-            sb.append(hex).append('\t').append(cleanName(m.name)).append('\t');
+            sb.append(hex(m.createId)).append('\t').append(cleanName(m.name)).append('\t');
             boolean first = true;
             for (Field fd : FIELDS) { if (!first) sb.append(','); first = false; sb.append(fd.key).append('=').append(m.get(fd.key)); }
             sb.append('\n');

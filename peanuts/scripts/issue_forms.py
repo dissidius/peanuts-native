@@ -38,6 +38,11 @@ def game_versions(root=ROOT):
     return out
 
 
+def current(root=ROOT):
+    """The newest release, from peanuts/VERSION"""
+    return (root / 'peanuts/VERSION').read_text(encoding='utf-8').strip()
+
+
 def versions(root=ROOT):
     """The release options: the newest (peanuts/VERSION) and the two before it, then older ones and test builds"""
     v = (root / 'peanuts/VERSION').read_text(encoding='utf-8').strip()
@@ -194,8 +199,9 @@ STORAGE = ['Internal storage', 'microSD card', 'USB drive or SSD', "I don't know
 
 LOG_BLOCK = '<details>\n<summary>Log (click to expand)</summary>\n\n```text\npaste the log here, or delete this block when you attach the file\n```\n\n</details>\n'
 
-BUILD_LOG_HOW = ("Tap **Share build log** on the game's card on Home (it shows while a build has stopped or failed), on the Prepare card, or hold the "
-                 "game's cover › **Storage** › **Share build log**; then **Save to a folder**, and drag that .zip into this box as it is.")
+BUILD_LOG_HOW = ("Tap **Share log** on the game's card on Home (it shows while a build has stopped or failed), on the Prepare card, or hold the "
+                 "game's cover › **Storage** › **Share log…**, and pick **Newest build** when it asks; then **Save to a folder**, and drag that .zip "
+                 "into this box as it is.")
 
 
 def searched(extra=()):
@@ -280,8 +286,8 @@ def game_problem():
                 'A controller\'s gyro',
             ], multiple=True, required=False),
             text('log', 'Log of the run', (
-                "Right after the problem, before you start the game again: hold the game's cover › **Storage** › **Share log** (that game's "
-                "newest run), or Settings › **Share log**. After \"The game stopped unexpectedly\", the dialog's **Share log** works too. Its "
+                "Right after the problem, before you start the game again: hold the game's cover › **Storage** › **Share log…** and pick "
+                "**Newest game run** when it asks, or Settings › **Share log**. After \"The game stopped unexpectedly\", the dialog's **Share log** works too. Its "
                 "file name starts with the game's title ID.\n"
                 "Best: save the file, zip it and drag the .zip into this box. Or paste the whole log into the block below (it is collapsed in "
                 "the issue), and keep the `<details>` lines.\n"), value=LOG_BLOCK, required=True),
@@ -442,7 +448,7 @@ def builder_problem():
             what('What you ran and what happened.'),
             pick('os', 'Computer', ['Linux', 'macOS (Apple silicon)', 'macOS (Intel)', 'Windows', 'Windows with WSL', 'Something else']),
             line('os_version', 'System version', 'For example the distribution and its version.', 'Ubuntu 24.04'),
-            line('source', 'Source', 'The release or the commit you built from (git rev-parse --short HEAD).', 'v0.1.5 or 04cad56'),
+            line('source', 'Source', 'The release or the commit you built from (git rev-parse --short HEAD).', f'v{current()} or 04cad56'),
             line('command', 'Command', 'The command line as you ran it.', 'peanuts/scripts/peanuts-build.sh "Game.nsp" "Game-update.nsp" --push',
                  required=True),
             line('tools', 'Tool versions', 'Python, .NET and whatever else the failing step uses.', 'Python 3.14.0, .NET 10.0.100'),
@@ -546,7 +552,7 @@ def question():
             text('body', 'Your post', 'What you want to know or tell, and why. For a device report: the game and its version, the device, the '
                                       'driver, the settings and how it runs. For development, the part of the code you are looking at and '
                                       'what you have read or tried so far.', required=True),
-            line('context', 'Device, app version and game, if they matter', placeholder='AYN Thor Max, Peanuts Native 0.1.5, Mario Kart 8 Deluxe'),
+            line('context', 'Device, app version and game, if they matter', placeholder=f'AYN Thor Max, Peanuts Native {current()}, Mario Kart 8 Deluxe'),
             text('links', 'Logs, screenshots or links', 'Anything that goes with the post.'),
             checks('rules', 'Rules', [("My post has no game files, keys, firmware or links to them, and doesn't ask for any.", True)]),
         ],
