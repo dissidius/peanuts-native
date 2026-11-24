@@ -67,7 +67,7 @@ public final class SettingsSections {
                     new Group("Speed", r("Frame rate cap", "gauge"), r("Frame generation", "gauge"), r("Use fast cores", "gauge"), r("Overlay", "list"))),
             new Section("controls", "Controls", "controller", DEFAULTS,
                     new Group("Buttons", r("Button mapping", "controller"), r("Xbox button label swap", "controller")),
-                    new Group("Touch", r("On-screen controls", "game"), r("Show / hide button", "game")),
+                    new Group("Touch", r("On-screen controls", "game"), r("Virtual controller style", "controller"), r("Show / hide button", "game")),
                     new Group("Controller", r("Controller: in-game panel", "controller"), r("Rumble", "controller"))),
             new Section("screens", "Screens", "companion", "What each screen shows, and when the screen stays on.",
                     new Group("Second screen", r("Bottom screen", "companion"), r("Games without a companion", "screens-cover"), r("Swap screens", "swap-off"),
