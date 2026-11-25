@@ -1,0 +1,237 @@
+# Upstream dev-0.1.9 + fork's controller skins; 0.1.8 APK is used only for verified seeds and catalog.
+# Unlike UI smoke tests this uses the REAL upstream ARM64 on-device packer.
+name: Peanuts Native Fork Android APK (upgrade-safe)
+on:
+  push:
+    branches:
+      - 'feature/android-dualsense-*'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      CI: 'true'
+      UPSTREAM_APK: https://github.com/igawa6/peanuts-native/releases/download/v0.1.8-1/PeanutsNative-0.1.8.apk
+      UPSTREAM_SHA256: e8f1afd54b785e48bbd3826e73837051d2587e71a079cf5932939d8f60b2b679
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install Android SDK and NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          SDKMGR="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMGR" ]; then SDKMGR=$(command -v sdkmanager); fi
+          yes | "$SDKMGR" --licenses >/dev/null || true
+          "$SDKMGR" --install "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+      - name: Install fontTools for extended button glyphs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/font-env"
+          "$RUNNER_TEMP/font-env/bin/python" -m pip install "fonttools>=4.55,<5"
+          echo "$RUNNER_TEMP/font-env/bin" >> "$GITHUB_PATH"
+      - name: Set up .NET 10 for Android NativeAOT
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Install native packer build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh ninja-build cmake clang lld zlib1g-dev
+      - name: Fetch verified stable APK for catalog and seeds only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/upstream"
+          curl -fL --retry 4 --connect-timeout 30 -o "$RUNNER_TEMP/upstream/PeanutsNative-0.1.8.apk" "$UPSTREAM_APK"
+          printf '%s  %s\n' "$UPSTREAM_SHA256" "$RUNNER_TEMP/upstream/PeanutsNative-0.1.8.apk" | sha256sum -c -
+      - name: Build matching 0.1.9 on-device packer from source
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'DMSH_VK_CHAIN "c1eff1d2d8c1"' dm/gfx/nvn/dmsh_chain_vk.h
+          zsh peanuts/scripts/ondevice-stage.sh "$RUNNER_TEMP/real-packer" all
+          STAGE="$RUNNER_TEMP/real-packer/stage"
+          python3 dm/gfx/tools/xlate_tree.py --check-lib "$STAGE/lib/libdmsh_xlate.so"
+          test -s "$STAGE/python/bin/nxpack_worker"
+          test -s "$STAGE/python/lib/python3.14/lib-dynload/_nxyaz0.cpython-314-aarch64-linux-android.so"
+          echo "NX_PACK_STAGE=$STAGE" >> "$GITHUB_ENV"
+      - name: Match official 0.1.8 game catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/config"
+          APK="$RUNNER_TEMP/upstream/PeanutsNative-0.1.8.apk"
+          # The gradle.properties default holds only seven bring-up profiles.
+          # Use the release APK's complete profile list, not the tiny default.
+          unzip -Z1 "$APK" | sed -n 's#^assets/profiles/\([0-9A-F]\{16\}\)\.profile\.bin$#\1#p' > "$RUNNER_TEMP/config/games.txt"
+          # Preserve all 76 games in the official 0.1.8 release.
+          LC_ALL=C sort -u "$RUNNER_TEMP/config/games.txt" -o "$RUNNER_TEMP/config/games.txt"
+          echo "Game catalog in built APK:"
+          cat "$RUNNER_TEMP/config/games.txt"
+          if [ "$(wc -l < "$RUNNER_TEMP/config/games.txt")" -lt 76 ]; then
+            echo "::error::Official profile catalog extraction failed: refusing to ship incomplete game support"
+            exit 1
+          fi
+          if ! grep -qx 0100606026F12000 "$RUNNER_TEMP/config/games.txt"; then
+            echo "::error::FINAL FANTASY RESONANCE missing from built catalog"
+            exit 1
+          fi
+          while read -r game; do
+            test -f "dm/games/$game/game.tsv" || { echo "::error::Missing profile: $game"; exit 1; }
+          done < "$RUNNER_TEMP/config/games.txt"
+          echo "NX_GAMES_CSV=$(paste -sd, "$RUNNER_TEMP/config/games.txt")" >> "$GITHUB_ENV"
+      - name: Restore official prewarm seeds (SHA-256 verified)
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$RUNNER_TEMP/upstream/PeanutsNative-0.1.8.apk"
+          SEEDS="$RUNNER_TEMP/release-prewarm-seeds"
+          mkdir -p "$SEEDS"
+          total=0
+          while read -r game digest; do
+            [ -n "$game" ] || continue
+            if grep -qx "$game" "$RUNNER_TEMP/config/games.txt"; then
+              unzip -p "$APK" "assets/profiles/$game.seed" > "$SEEDS/$game.seed"
+              test -s "$SEEDS/$game.seed" || { echo "::error::Missing release prewarm seed for $game"; exit 1; }
+              echo "$digest  $SEEDS/$game.seed" | sha256sum -c -
+              total=$((total+1))
+            fi
+          done < peanuts/prewarm-sha256.tsv
+          echo "Verified $total upstream release prewarm seeds"
+          echo "PN_PREWARM_SEEDS=$SEEDS" >> "$GITHUB_ENV"
+      - name: Require persistent, private Android signing key
+        shell: bash
+        env:
+          SIGN_STORE_BASE64: ${{ secrets.PEANUTS_SIGN_STORE_B64 }}
+          SIGN_ALIAS: ${{ secrets.PEANUTS_SIGN_ALIAS }}
+          SIGN_PASSWORD: ${{ secrets.PEANUTS_SIGN_PASS }}
+        run: |
+          set -euo pipefail
+          # Deliberately fail closed: ephemeral signatures make the next APK
+          # incompatible with the previous installation, risking user data.
+          if [ -z "$SIGN_STORE_BASE64" ] || [ -z "$SIGN_ALIAS" ] || [ -z "$SIGN_PASSWORD" ]; then
+            echo "::error::Persistent signing is required. Configure all three repository Actions secrets: PEANUTS_SIGN_STORE_B64, PEANUTS_SIGN_ALIAS, PEANUTS_SIGN_PASS. See android/DUALSENSE_SIGNING.md, then run android/setup-fork-signing.ps1 on a trusted PC."
+            exit 1
+          fi
+          umask 077
+          KEYSTORE="$RUNNER_TEMP/peanuts-native-dualsense.p12"
+          printf '%s' "$SIGN_STORE_BASE64" | base64 --decode > "$KEYSTORE"
+          test -s "$KEYSTORE"
+          keytool -list -keystore "$KEYSTORE" -storepass "$SIGN_PASSWORD" -alias "$SIGN_ALIAS" >/dev/null
+          echo "NX_SIGN_STORE=$KEYSTORE" >> "$GITHUB_ENV"
+          echo "NX_SIGN_ALIAS=$SIGN_ALIAS" >> "$GITHUB_ENV"
+          echo "NX_SIGN_PASS=$SIGN_PASSWORD" >> "$GITHUB_ENV"
+          # The workflow run number increases for new releases; 200000 exceeds all previous fork test codes.
+          echo "NX_VERSION_CODE=$((200000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          echo "::notice::Using persistent private signer. Existing installations can update only if signed with its certificate."
+          keytool -list -v -keystore "$KEYSTORE" -storepass "$SIGN_PASSWORD" -alias "$SIGN_ALIAS" | grep -E 'SHA256:|SHA1:'
+      - name: Build same-ID APK (cannot overwrite official signer)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd android/app
+          chmod +x gradlew
+          for attempt in 1 2 3 4; do
+            if ./gradlew --no-daemon --refresh-dependencies assembleRelease \
+            -PnxApp=peanuts -PnxRelease=true -PnxLabel='Peanuts Native' -PnxGenericHost=true \
+            "-PnxGames=$NX_GAMES_CSV" \
+            "-PnxPackStage=$NX_PACK_STAGE" -PnxPackEngine=native \
+            -PnxVersion=0.1.9 "-PnxVersionCode=$NX_VERSION_CODE" --stacktrace; then
+              break
+            fi
+            if [ "$attempt" -eq 4 ]; then
+              echo "::error::Gradle compilation failed after four attempts"
+              exit 1
+            fi
+            echo "::warning::Gradle download or compilation failed; retrying with refreshed dependencies ($((attempt+1))/4)"
+            sleep 15
+          done
+          mkdir -p out
+          APK=$(find build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -1)
+          test -n "$APK" && test -s "$APK"
+          cp "$APK" out/PeanutsNative-DualSense-same-package.apk
+      - name: Build side-by-side app (original stays installed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd android/app
+          for attempt in 1 2 3 4; do
+            if ./gradlew --no-daemon --refresh-dependencies assembleRelease \
+            -PnxApp=peanuts -PnxRelease=true -PnxAppId=peanutsds -PnxLabel="Peanuts Native DualSense" \
+            -PnxGenericHost=true "-PnxGames=$NX_GAMES_CSV" \
+            "-PnxPackStage=$NX_PACK_STAGE" -PnxPackEngine=native \
+            -PnxVersion=0.1.9-dualsense "-PnxVersionCode=$NX_VERSION_CODE" --stacktrace; then
+              break
+            fi
+            if [ "$attempt" -eq 4 ]; then
+              echo "::error::Gradle compilation failed after four attempts"
+              exit 1
+            fi
+            echo "::warning::Gradle download or compilation failed; retrying with refreshed dependencies ($((attempt+1))/4)"
+            sleep 15
+          done
+          APK=$(find build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -1)
+          test -n "$APK" && test -s "$APK"
+          cp "$APK" out/PeanutsNative-DualSense-side-by-side.apk
+      - name: Check real native packer and profile payloads in APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for apk in android/app/out/PeanutsNative-DualSense-*.apk; do
+            echo "--- $apk"
+            du -h "$apk"
+            for lib in libpython3.14.so libnxpack.so libzbicdec.so libcra.so libdmsh_xlate.so libSPIRV-Tools-shared.so; do
+              unzip -Z1 "$apk" | grep -Fx "lib/arm64-v8a/$lib"
+            done
+            unzip -Z1 "$apk" | grep -Fx 'assets/pack/python.zip'
+            unzip -Z1 "$apk" | grep -Fx 'assets/pack/tools.zip'
+            unzip -Z1 "$apk" | grep -Fx 'assets/pack/version.txt'
+            unzip -Z1 "$apk" | grep -Fx 'classes.dex'
+          done
+      - name: Verify package IDs, signing certificates and version codes
+        shell: bash
+        run: |
+          set -euo pipefail
+          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
+          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          APK_DIR="android/app/out"
+          same="$APK_DIR/PeanutsNative-DualSense-same-package.apk"
+          side="$APK_DIR/PeanutsNative-DualSense-side-by-side.apk"
+          "$APKSIGNER" verify --verbose --print-certs "$same"
+          "$APKSIGNER" verify --verbose --print-certs "$side"
+          same_pkg=$("$AAPT" dump badging "$same" | sed -n '1p')
+          side_pkg=$("$AAPT" dump badging "$side" | sed -n '1p')
+          [[ "$same_pkg" == *"name='dev.nxnative.android.peanuts'"* ]]
+          [[ "$side_pkg" == *"name='dev.nxnative.android.peanutsds'"* ]]
+          [[ "$same_pkg" == *"versionName='0.1.9'"* ]]
+          [[ "$side_pkg" == *"versionName='0.1.9-dualsense'"* ]]
+          [[ "$same_pkg" == *"versionCode='$NX_VERSION_CODE'"* ]]
+          [[ "$side_pkg" == *"versionCode='$NX_VERSION_CODE'"* ]]
+          echo "$same_pkg"
+          echo "$side_pkg"
+          sha_of() {
+            "$APKSIGNER" verify --print-certs "$1" | sed -n 's/.*Signer #1 certificate SHA-256 digest: //p'
+          }
+          CERT1=$(sha_of "$same")
+          CERT2=$(sha_of "$side")
+          test -n "$CERT1"
+          test "$CERT1" = "$CERT2" || { echo "::error::APK signer mismatch"; exit 1; }
+          echo "::notice::Both APKs share one persistent signer fingerprint: $CERT1"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: PeanutsNative-v0.1.9-dev-Fork-REAL-ARM64-APKs
+          path: android/app/out/PeanutsNative-DualSense-*.apk
+          if-no-files-found: error
+          retention-days: 14
