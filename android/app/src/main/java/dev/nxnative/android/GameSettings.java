@@ -286,6 +286,11 @@ final class GameSettings {
 
         // ---- Controls ----
         controls.add(new Ui.Setting(a, "📳", "Rumble", null).toggle(a, Prefs.rumble(a, id), (b, on) -> Prefs.rumble(a, id, on)).says("The controller, or the phone without one", "No rumble"));
+        controls.add(new Ui.Setting(a, "🎨", "Virtual controller style", v -> touchSkin(a, g, again))
+                .value(TouchControls.ownSkin(a, id) ? TouchControls.SKIN_NAMES[TouchControls.skin(a, id)]
+                        : "Default (Settings: " + TouchControls.SKIN_NAMES[TouchControls.skin(a)] + ")")
+                .note("On-screen buttons and stick layout; not the physical controller mapping. Applies at the next start.")
+                .chevron(a));
         controls.add(new Ui.Setting(a, "🕹️", "Button mapping", v -> PadMapUi.forGame(a, g, again)).value(PadMapUi.label(a, id)).chevron(a));
         controls.add(new Ui.Setting(a, "🎯", "Motion sensitivity", v -> motionSens(a, g, again)).value(Prefs.MOTION_NAMES[Prefs.motionSens(a, id)]).note("How far the phone's gyro turns the aim; from the next start").chevron(a));
         // PEANUTS: the Xbox button labels row is removed (owner 2026-11-26; Prefs.dropXboxSwap)
@@ -320,7 +325,7 @@ final class GameSettings {
         Section[] all = GamePagePort.harvesting() ? new Section[] {picture, speed, options, controls, advanced} : perf ? new Section[] {picture, speed, advanced} : new Section[] {options, controls};   // Performance: what changes speed and picture; Game: the game's own options, language and controls   // PEANUTS: the page in areas takes every section's rows from one build
         View reset = recLine != null ? null : Ui.button(a, "Reset to defaults", Ui.Kind.SOFT, v -> new PadFocus.Builder(a).setTitle("Reset to defaults · " + g.name)
                 .setMessage("The game will follow global settings. Extra environment lines are kept.")
-                .setPositiveButton("Reset", (x, w) -> { Prefs.resetGame(a, id); again.run(); }).setNegativeButton("Cancel", null).show());
+                .setPositiveButton("Reset", (x, w) -> { Prefs.resetGame(a, id); TouchControls.skin(a, id, null); again.run(); }).setNegativeButton("Cancel", null).show());
         if (wide) rail(a, content, all, reset, again);
         else column(a, content, all, reset);
         refresh[0].run();   // the tags, the Recommended: lines and the choice's changed line
@@ -881,6 +886,20 @@ final class GameSettings {
     private static void dlssSharp(MainActivity a, Game g, Runnable done) {   // the DLSS stand-in's RCAS (DlssTune, DM_VK_DLSS_SHARP; GSR 2's and FSR 1's); the in-game panel changes it live
         StepSlider.dialog(a, DlssTune.sharpTitle(GameUpscaler.dlssMode(a, g.titleId)), " · " + g.name, DlssTune.sharpNames(), GameUpscaler.dlssSharp(a, g.titleId), "Softer", "Sharper",
                           DlssTune.sharpName(DlssTune.SHARP_DEFAULT), GameUpscaler.ownDlssSharp(a, g.titleId), v -> GameUpscaler.dlssSharp(a, g.titleId, v), done);
+    }
+
+    /** This game's optional touch-controller style; the Default row follows the global Settings choice. */
+    private static void touchSkin(MainActivity a, Game g, Runnable done) {
+        String[] labels = new String[TouchControls.SKIN_NAMES.length + 1];
+        labels[0] = "Default (Settings: " + TouchControls.SKIN_NAMES[TouchControls.skin(a)] + ")";
+        System.arraycopy(TouchControls.SKIN_NAMES, 0, labels, 1, TouchControls.SKIN_NAMES.length);
+        int checked = TouchControls.ownSkin(a, g.titleId) ? TouchControls.skin(a, g.titleId) + 1 : 0;
+        new PadFocus.Builder(a).setTitle("Virtual controller style · " + g.name)
+                .setSingleChoiceItems(labels, checked, (x, w) -> {
+                    TouchControls.skin(a, g.titleId, w == 0 ? null : w - 1);
+                    x.dismiss();
+                    done.run();
+                }).setNegativeButton("Cancel", null).show();
     }
 
     private static void motionSens(MainActivity a, Game g, Runnable done) {   // the phone's gyro scale (Prefs.MOTION_PCT, DM_MOTION_SENS); read when the game starts
